@@ -1,0 +1,7 @@
+# From IDS
+ip addr add 172.16.0.10/24 dev eth0
+# To Blockchain
+ip addr add 10.99.0.1/24 dev eth1
+
+# To Blockchain
+ip route add 10.99.0.100 via 10.99.0.1 dev eth1

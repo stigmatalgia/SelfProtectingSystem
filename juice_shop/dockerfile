@@ -1,0 +1,14 @@
+FROM kathara/base
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /juice-shop
+RUN curl -L https://github.com/juice-shop/juice-shop/releases/download/v17.1.1/juice-shop-17.1.1_node20_linux_x64.tgz | tar xz --strip-components=1
+
+EXPOSE 3000
+CMD ["npm", "start"]

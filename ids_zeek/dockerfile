@@ -1,0 +1,19 @@
+FROM kathara/base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    ca-certificates \
+    libpcap-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_12/ /' | tee /etc/apt/sources.list.d/security:zeek.list && \
+    curl -fsSL https://download.opensuse.org/repositories/security:/zeek/Debian_12/Release.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/security_zeek.gpg > /dev/null
+
+RUN apt-get update && apt-get install -y zeek
+
+ENV PATH=$PATH:/opt/zeek/bin
+
+RUN rm -rf /var/lib/apt/lists/*

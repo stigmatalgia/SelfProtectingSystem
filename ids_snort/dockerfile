@@ -1,0 +1,40 @@
+FROM kathara/base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    pkg-config \
+    flex \
+    bison \
+    libpcap-dev \
+    libpcre2-dev \
+    libssl-dev \
+    zlib1g-dev \
+    libluajit-5.1-dev \
+    libhwloc-dev \
+    libdumbnet-dev \
+    liblzma-dev \
+    libexpat1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt
+
+RUN git clone https://github.com/snort3/libdaq.git \
+    && cd libdaq \
+    && ./bootstrap \
+    && ./configure \
+    && make -j$(nproc) \
+    && make install
+
+RUN git clone https://github.com/snort3/snort3.git \
+    && cd snort3 \
+    && ./configure_cmake.sh --prefix=/usr/local \
+    && cd build \
+    && make -j$(nproc) \
+    && make install
+
+RUN ldconfig
+RUN mkdir -p /etc/snort/rules /var/log/snort /usr/local/etc/snort

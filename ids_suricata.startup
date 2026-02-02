@@ -1,0 +1,12 @@
+# to Nodes
+ip addr add 172.16.0.2/24 dev eth0
+# sniffing from router
+ip link set eth1 up
+ip link set eth1 promisc on
+
+# Suricata rules
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: SQL Injection Attempt"; content:"1=1"; nocase; sid:1000001; rev:1;)' > /etc/suricata/rules/local.rules
+
+suricata -S /etc/suricata/rules/local.rules -i eth1 -D
+
+# tail -f /var/log/suricata/fast.log

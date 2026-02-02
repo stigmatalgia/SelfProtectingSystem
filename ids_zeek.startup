@@ -1,0 +1,24 @@
+# to Nodes
+ip addr add 172.16.0.3/24 dev eth0
+# sniffing from router
+ip link set eth1 up
+ip link set eth1 promisc on
+
+mkdir -p /var/log/zeek
+cd /var/log/zeek
+
+# Zeek rules ( have mercy pls )
+cat > /var/log/zeek/local.sig <<EOF
+signature sql-injection-test {
+  ip-proto == tcp
+  dst-port == 3000
+  payload /.*1=1.*/
+  event "IDS-ZEEK: SQL Injection Attempt"
+}
+EOF
+
+zeek -i eth1 -C -s local.sig &
+
+touch signatures.log
+
+#cd /var/log/zeek tail -f signatures.log
