@@ -1,12 +1,33 @@
-# to Nodes
-ip addr add 172.16.0.2/24 dev eth0
-# sniffing from router
+# IDS Suricata Startup Script
+# eth0: Management network to validator1 - 172.16.2.1
+# eth1: DMZ sniffing interface (promiscuous)
+
+# Network configuration
+ip addr add 172.16.2.1/24 dev eth0
 ip link set eth1 up
 ip link set eth1 promisc on
 
-# Suricata rules
+# Suricata rules for SQL injection detection
 echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: SQL Injection Attempt"; content:"1=1"; nocase; sid:1000001; rev:1;)' > /etc/suricata/rules/local.rules
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: SQL Injection Attempt URL Encoded"; content:"1%3D1"; nocase; sid:1000002; rev:1;)' >> /etc/suricata/rules/local.rules
 
-suricata -S /etc/suricata/rules/local.rules -i eth1 -D
+# Start Suricata in daemon mode
+# Start Suricata in daemon mode
+# Using --pcap to avoid fanout errors in Docker environment
+suricata -S /etc/suricata/rules/local.rules --pcap=eth1 --runmode single &
 
-# tail -f /var/log/suricata/fast.log
+echo "Suricata IDS started"
+
+# Start blockchain alert sender
+# Validator1 is at 172.16.2.10
+VALIDATOR_IP="172.16.2.10"
+
+# Copy alert sender script
+cp /shared/alert_sender.sh /tmp/alert_sender.sh
+chmod +x /tmp/alert_sender.sh
+
+# Start alert sender in background
+# Suricata logs to /var/log/suricata/fast.log
+echo "Starting blockchain alert sender..."
+/tmp/alert_sender.sh /var/log/suricata/fast.log $VALIDATOR_IP suricata &
+

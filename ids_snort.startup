@@ -1,28 +1,48 @@
-# to Nodes
-ip addr add 172.16.0.1/24 dev eth0
-# sniffing from router
+# IDS Snort Startup Script
+# eth0: Management network to validator0 - 172.16.1.1
+# eth1: DMZ sniffing interface (promiscuous)
+
+# Network configuration
+ip addr add 172.16.1.1/24 dev eth0
 ip link set eth1 up
 ip link set eth1 promisc on
 
+# Create directories
 mkdir -p /etc/snort/rules /var/log/snort /usr/local/etc/snort
 chmod -R 777 /var/log/snort
 
-# Snort rules ( not a verb )
-echo 'alert tcp any any -> 10.0.0.80 any (msg:"SPS-TRAFFIC: SQL Injection Attempt (1=1)"; content:"1=1", nocase; sid:1000002; rev:2;)' > /etc/snort/rules/local.rules
+# Snort rules for SQL injection detection
+echo 'alert tcp any any -> 10.0.0.80 any (msg:"SPS-TRAFFIC: SQL Injection Attempt URL Encoded (1%3D1)"; content:"1%3D1"; sid:1000002; rev:2;)' > /etc/snort/rules/local.rules
+echo 'alert tcp any any -> 10.0.0.80 any (msg:"SPS-TRAFFIC: SQL Injection Attempt (1=1)"; content:"1=1"; sid:1000003; rev:2;)' >> /etc/snort/rules/local.rules
 
+# Create alert file
 touch /var/log/snort/alert_fast.txt
 chmod 666 /var/log/snort/alert_fast.txt
 
+# Snort configuration
 echo "HOME_NET = '10.0.0.80/32'" > /usr/local/etc/snort/snort.lua
 echo "EXTERNAL_NET = 'any'" >> /usr/local/etc/snort/snort.lua
-echo "alert_fast = { file = true, limit = 100 }" >> /usr/local/etc/snort/snort.lua
-
+echo "alert_fast = { file = false }" >> /usr/local/etc/snort/snort.lua
 echo "ips = { rules = [[ include /etc/snort/rules/local.rules ]] }" >> /usr/local/etc/snort/snort.lua
 
-snort -c /usr/local/etc/snort/snort.lua \
+# --daq-batch-size 1: Forces Snort to process every packet immediately (no internal batching)
+stdbuf -o0 -e0 snort -c /usr/local/etc/snort/snort.lua \
       -i eth1 \
-      -l /var/log/snort \
       -A alert_fast \
-      -k none &
+      --daq-batch-size 1 \
+      -q \
+      -y >> /var/log/snort/alert_fast.txt 2>&1 &
+      
+echo "Snort IDS started"
 
-# tail -f /var/log/snort/alert_fast.txt
+# Start blockchain alert sender
+# Validator0 is at 172.16.1.10
+VALIDATOR_IP="172.16.1.10"
+
+# Copy alert sender script
+cp /shared/alert_sender.sh /tmp/alert_sender.sh
+chmod +x /tmp/alert_sender.sh
+
+# Start alert sender in background
+echo "Starting blockchain alert sender..."
+/tmp/alert_sender.sh /var/log/snort/alert_fast.txt $VALIDATOR_IP snort &

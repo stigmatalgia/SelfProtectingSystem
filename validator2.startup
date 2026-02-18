@@ -1,0 +1,89 @@
+#!/bin/bash
+# validator2.startup - Tertiary blockchain validator
+
+# Network Configuration
+# eth0: Management network (to ids_zeek) - 172.16.3.10
+# eth1: Blockchain network - 10.99.0.3
+ip addr add 172.16.3.10/24 dev eth0
+ip addr add 10.99.0.3/24 dev eth1
+
+# Enable IP forwarding
+sysctl -w net.ipv4.ip_forward=1
+
+# Wait for network to be ready
+sleep 2
+
+# Set working directory
+DATA_DIR=/data
+cd /home/qbft/
+
+# Copy data files to working directory
+mkdir -p /home/qbft/data
+cp -r $DATA_DIR/* /home/qbft/data/
+ls -la /home/qbft/data/
+
+# Initialize geth with genesis
+geth --datadir data init data/genesis.json 2>&1 | tee -a /var/log/geth.log
+
+# Copy static and permissioned nodes to geth directory
+cp data/static-nodes.json data/geth/
+cp data/permissioned-nodes.json data/geth/
+cp data/nodekey data/geth/
+
+# Get account address
+export ADDRESS=$(grep -o '"address": *"[^"]*"' ./data/keystore/accountKeystore | grep -o '"[^"]*"$' | sed 's/"//g')
+export PRIVATE_CONFIG=ignore
+
+echo "Starting geth with account: $ADDRESS" | tee -a /var/log/geth.log
+
+# Start geth node with QBFT consensus
+geth --datadir data \
+    --nodiscover \
+    --verbosity 3 \
+    --syncmode full \
+    --istanbul.blockperiod 2 \
+    --mine --miner.threads 1 --miner.gasprice 0 \
+    --nousb \
+    --networkid 2222 \
+    --port 30303 \
+    --unlock $ADDRESS \
+    --allow-insecure-unlock \
+    --password data/keystore/accountPassword \
+    2>&1 | tee -a /var/log/geth.log &
+
+# Wait for geth and contract deployment on validator0
+echo "Waiting for blockchain network..."
+for i in {1..30}; do
+    if [ -S /home/qbft/data/geth.ipc ]; then
+        echo "Geth IPC socket ready"
+        break
+    fi
+    sleep 1
+done
+
+# Start HTTP server via IPC
+geth attach /home/qbft/data/geth.ipc --exec "admin.startHTTP('0.0.0.0', 8545, '*', 'admin,eth,net,web3,personal,miner,txpool')" 2>&1 | tee -a /var/log/geth.log
+
+# Wait for contract to be deployed on validator0 and copy address
+echo "Waiting for contract details in /shared..."
+while [ ! -f /shared/contract_address.txt ] || [ ! -f /shared/contract_abi.json ]; do
+    sleep 2
+done
+
+echo "Found contract details, copying..."
+cp /shared/contract_address.txt /home/qbft/data/
+cp /shared/contract_abi.json /home/qbft/data/
+
+# Start the blockchain HTTP API server for receiving IDS alerts
+node /home/qbft/data/contract/blockchain_api.js 2>&1 | tee -a /var/log/blockchain_api.log &
+
+
+# Subscribe to contract events
+sleep 2
+if [ -f /home/qbft/data/contract_abi.json ] && [ -f /home/qbft/data/contract_address.txt ]; then
+    ABI=$(cat /home/qbft/data/contract_abi.json)
+    CONTRACT=$(cat /home/qbft/data/contract_address.txt)
+    node /home/qbft/data/contract/contractSubscription.js "$ABI" "$CONTRACT" 2>&1 | tee -a /var/log/events.log &
+fi
+
+echo "Validator2 startup complete"

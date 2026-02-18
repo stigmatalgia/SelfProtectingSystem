@@ -1,0 +1,101 @@
+#!/bin/bash
+# validator0.startup - Primary blockchain validator (leader)
+
+# Network Configuration
+# eth0: Management network (to ids_snort) - 172.16.1.10
+# eth1: Blockchain network - 10.99.0.1
+ip addr add 172.16.1.10/24 dev eth0
+ip addr add 10.99.0.1/24 dev eth1
+
+# Enable IP forwarding
+sysctl -w net.ipv4.ip_forward=1
+
+# Wait for network to be ready
+sleep 2
+
+# Set working directory 
+DATA_DIR=/data
+cd /home/qbft/
+
+# Copy data files to working directory
+mkdir -p /home/qbft/data
+cp -r $DATA_DIR/* /home/qbft/data/
+ls -la /home/qbft/data/
+
+# Initialize geth with genesis
+geth --datadir data init data/genesis.json 2>&1 | tee -a /var/log/geth.log
+
+# Copy static and permissioned nodes to geth directory
+cp data/static-nodes.json data/geth/
+cp data/permissioned-nodes.json data/geth/
+cp data/nodekey data/geth/
+
+# Get account address from keystore
+export ADDRESS=$(grep -o '"address": *"[^"]*"' ./data/keystore/accountKeystore | grep -o '"[^"]*"$' | sed 's/"//g')
+export PRIVATE_CONFIG=ignore
+
+echo "Starting geth with account: $ADDRESS" | tee -a /var/log/geth.log
+
+# Start geth node with QBFT consensus
+geth --datadir data \
+    --nodiscover \
+    --verbosity 3 \
+    --syncmode full \
+    --istanbul.blockperiod 2 \
+    --mine --miner.threads 1 --miner.gasprice 0 \
+    --nousb \
+    --networkid 2222 \
+    --port 30303 \
+    --unlock $ADDRESS \
+    --allow-insecure-unlock \
+    --password data/keystore/accountPassword \
+    2>&1 | tee -a /var/log/geth.log &
+
+# Wait for geth to start and create IPC socket
+echo "Waiting for geth to start..."
+for i in {1..30}; do
+    if [ -S /home/qbft/data/geth.ipc ]; then
+        echo "Geth IPC socket ready"
+        break
+    fi
+    sleep 1
+done
+
+# Deploy the IDS smart contract (only validator0 does this)
+echo "Deploying IDS smart contract..."
+node /home/qbft/data/contract/compile_and_deploy_contract.js 2>&1 | tee /var/log/contract_deploy.log
+
+# Wait for deployment artifacts to be created
+echo "Waiting for contract deployment artifacts..."
+for i in {1..30}; do
+    if [ -f /home/qbft/data/contract_address.txt ] && [ -f /home/qbft/data/contract_abi.json ]; then
+        echo "Contract artifacts found."
+        break
+    fi
+    sleep 1
+done
+
+CONTRACT_ADDR=$(cat /home/qbft/data/contract_address.txt)
+
+echo "Contract deployed at: $CONTRACT_ADDR"
+
+# IMPORTANT: Share contract details with other validators via shared volume
+cp /home/qbft/data/contract_address.txt /shared/
+cp /home/qbft/data/contract_abi.json /shared/
+chmod 644 /shared/contract_address.txt /shared/contract_abi.json
+
+# Start HTTP server manually for the blockchain API
+geth attach /home/qbft/data/geth.ipc --exec "admin.startHTTP('0.0.0.0', 8545, '*', 'admin,eth,net,web3,personal,miner,txpool')" 2>&1 | tee -a /var/log/geth.log
+
+# Start the blockchain HTTP API server for receiving IDS alerts
+node /home/qbft/data/contract/blockchain_api.js 2>&1 | tee -a /var/log/blockchain_api.log &
+
+# Subscribe to contract events
+sleep 2
+if [ -f /home/qbft/data/contract_abi.json ] && [ -f /home/qbft/data/contract_address.txt ]; then
+    ABI=$(cat /home/qbft/data/contract_abi.json)
+    CONTRACT=$(cat /home/qbft/data/contract_address.txt)
+    node /home/qbft/data/contract/contractSubscription.js "$ABI" "$CONTRACT" 2>&1 | tee -a /var/log/events.log &
+fi
+
+echo "Validator0 startup complete"
