@@ -1,3 +1,4 @@
-# to "The internet" aka, our router :/
+# Attacker, simula un attore esterno al sistema che fa uso
+# Del servizio juice_shop sul quale performa attacchi.
 ip addr add 192.168.1.10/24 dev eth0
 ip route add default via 192.168.1.254

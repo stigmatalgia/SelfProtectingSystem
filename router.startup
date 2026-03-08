@@ -1,7 +1,12 @@
+
+# Semplicemente un router che fa da NAT tra la rete interna (10.0.0.x) e la rete esterna (192.168.1.x),
+# Permette di inoltrare le richieste di attacco verso gli IDS, il traffico descrive le variabili di stato osservate
+# come descritte nell'architettura del sistema nel paper
+
 ip addr add 192.168.1.254/24 dev eth0
 ip addr add 10.0.0.254/24 dev eth1
 
+# Abilita il forwarding del traffico
 sysctl -w net.ipv4.ip_forward=1
-kat
 iptables -F
 iptables -t nat -F

@@ -1,9 +1,13 @@
-# Validator0, uno dei 3 nodi che formano il consenso QBFT nella blockchain
-# riceve le richieste di azione dagli altri nodi membri
-# E' leader, e' il primo nodo a proporre blocchi
+# Member2, uno dei 4 nodi member della blockchain.
+# A differenza dei validator, i member non partecipano al consenso (non votano o propongono blocchi).
+# I member 0, 1 e 2 agiscono come agenti per l'IDS, votando sullo stato del sistema nello smart contract.
+# Il member 3 e' invece dedicato alla comunicazione con l'attuatore.
 
-ip addr add 10.99.0.1/24 dev eth0
+ip addr add 172.16.3.10/24 dev eth0
+ip addr add 10.99.0.13/24 dev eth1
+
 sysctl -w net.ipv4.ip_forward=1
+
 
 DATA_DIR=/data
 cd /home/qbft/
@@ -16,6 +20,7 @@ ls -la /home/qbft/data/
 # inizializza go-ethereum cosi' che crei le directory necessarie setuppa i log in /var/log/geth.log
 # copia i file di config finalmente in geth cosi' che possa utilizzarli al secondo avvio con i dati corretti
 geth --datadir data init data/genesis.json 2>&1 | tee -a /var/log/geth.log
+
 cp data/static-nodes.json data/geth/
 cp data/permissioned-nodes.json data/geth/
 cp data/nodekey data/geth/
@@ -24,17 +29,15 @@ cp data/nodekey data/geth/
 export ADDRESS=$(grep -o '"address": *"[^"]*"' ./data/keystore/accountKeystore | grep -o '"[^"]*"$' | sed 's/"//g')
 export PRIVATE_CONFIG=ignore
 
+echo "Starting geth with account: $ADDRESS" | tee -a /var/log/geth.log
 
 # Lancia geth, un impiccio di configurazioni per ignorare le funzionalita' strettamente "economiche"
 # La rete e' statica e permissioned quindi gia' conosciamo i nodi da contattare, e' inutile fare discovery
 # intasa solo la rete durante l'avvio che e' gia' pesante di per se.
-# P.S> --mine e' la differenza fra un membro e un validatore, significa poter partecipare al consenso
-echo "Starting geth with account: $ADDRESS" | tee -a /var/log/geth.log
 geth --datadir data \
     --nodiscover \
     --verbosity 2 \
     --syncmode full \
-    --mine --miner.threads 1 --miner.gasprice 0 \
     --nousb \
     --networkid 2222 \
     --port 30303 \
@@ -53,38 +56,26 @@ for i in {1..30}; do
     sleep 0.5
 done
 
-echo "Deploying IDS smart contract..."
-node /home/qbft/data/contract/compile_and_deploy_contract.js 2>&1 | tee /var/log/contract_deploy.log
+geth attach /home/qbft/data/geth.ipc --exec "admin.startHTTP('0.0.0.0', 8545, '*', 'admin,eth,net,web3,personal,miner,txpool')" 2>&1 | tee -a /var/log/geth.log
 
-# 30 secondi massimi per aspettare che lo script di sopra finisca 
-for i in {1..30}; do
-    if [ -f /home/qbft/data/contract_address.txt ] && [ -f /home/qbft/data/contract_abi.json ]; then
-        echo "Contract artifacts found."
-        break
-    fi
+echo "Waiting for contract details in /shared..."
+while [ ! -f /shared/contract_address.txt ] || [ ! -f /shared/contract_abi.json ]; do
     sleep 0.5
 done
 
-echo "Populating State-Action map..."
-# Esegue il mapping iniziale delle transizioni di stato
-node /home/qbft/data/contract/populate_action_map.js 2>&1 | tee /var/log/map_population.log
+echo "Found contract details, copying..."
+cp /shared/contract_address.txt /home/qbft/data/
+cp /shared/contract_abi.json /home/qbft/data/
 
-CONTRACT_ADDR=$(cat /home/qbft/data/contract_address.txt)
-
-echo "Contract deployed at: $CONTRACT_ADDR"
-
-# Copia i file di configurazione da quelli generati, sempre per evitare di hardcodare tutto.
-cp /home/qbft/data/contract_address.txt /shared/
-cp /home/qbft/data/contract_abi.json /shared/
-chmod 644 /shared/contract_address.txt /shared/contract_abi.json
+# Avvia l'API della blockchain per gestire le comunicazioni esterne (es. IDS)
+node /home/qbft/data/contract/blockchain_api.js 2>&1 | tee -a /var/log/blockchain_api.log &
 
 # Verifica l'esistenza dei metadati del contratto: se presenti, istanzia un listener in background.
 # legge gli eventi emessi dallo smart contract dai log di Geth.
-geth attach /home/qbft/data/geth.ipc --exec "admin.startHTTP('0.0.0.0', 8545, '*', 'admin,eth,net,web3,personal,miner,txpool')" 2>&1 | tee -a /var/log/geth.log
 if [ -f /home/qbft/data/contract_abi.json ] && [ -f /home/qbft/data/contract_address.txt ]; then
     ABI=$(cat /home/qbft/data/contract_abi.json)
     CONTRACT=$(cat /home/qbft/data/contract_address.txt)
     node /home/qbft/data/contract/contractSubscription.js "$ABI" "$CONTRACT" 2>&1 | tee -a /var/log/events.log &
 fi
 
-echo "Validator0 startup complete"
+echo "Member2 startup complete"

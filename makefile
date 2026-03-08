@@ -13,6 +13,8 @@ build:
 	docker build -t ids_zeek ./ids_zeek
 	@echo "Building Quorum blockchain image..."
 	docker build -t kathara/quorum -f ./shared/Dockerfile .
+	@echo "Building Actuator..."
+	docker build -t actuator ./actuator
 
 generate-config:
 	@echo "Generating blockchain configuration..."
@@ -29,16 +31,18 @@ clean:
 
 clean-config:
 	@echo "Cleaning generated files..."
+	kathara lclean
 	rm -rf validator0/data validator1/data validator2/data
+	rm -rf member0/data member1/data member2/data member3/data
 	rm -rf blockchain_config_tmp
 	rm -rf ../resources/blockchain_configurations
+	rm -f shared/contract_address.txt shared/contract_abi.json
+	rm -rf shared/ssh
 
 
 test:
 	@echo "Running tests..."
-	./tests/run_all_tests.sh
-	./tests/test_attack_flow.sh
-	./tests/test_blockchain_consensus.sh
+	./tests/test_loop.sh
 
 setup: build generate-config start
 
@@ -54,3 +58,4 @@ help:
 	@echo "  make test            - Run tests"
 	@echo "  make setup           - Full setup (build + config + start)"
 	@echo "  make help            - Show this help"
+

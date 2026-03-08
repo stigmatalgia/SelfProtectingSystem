@@ -4,5 +4,5 @@ kathara~=3.7.8
 fs~=2.4.16
 numpy~=2.2.2
 eth_utils
-setuptools
+setuptools~=69.5.1
 tqdm

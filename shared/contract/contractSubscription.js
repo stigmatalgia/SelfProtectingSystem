@@ -4,7 +4,6 @@ const { Web3 } = require('web3');
 const { IpcProvider } = require('web3-providers-ipc');
 
 var web3 = new Web3(new IpcProvider('/home/qbft/data/geth.ipc'));
-//const web3 = new Web3(new Web3.providers.WebsocketProvider('ws://localhost:32000'));
 
 const [, , contractABIJson, deployedAddress] = process.argv;
 const abi = JSON.parse(contractABIJson);
@@ -15,32 +14,39 @@ myContract.handleRevert = true;
 console.log('Indirizzo del contratto:', myContract.options.address);
 console.log('Eventi disponibili:', Object.keys(myContract.events));
 
+// Poll for ActionRequired events instead of using real-time subscriptions,
+// which silently fail with Web3.js v4 over IPC.
+const POLL_INTERVAL_MS = 2000;
 
-const listenToEvents = async () => {
-	console.log('In attesa di eventi...');
-	/*
-	const providersAccounts = await web3.eth.getAccounts();
-	const defaultAccount = providersAccounts[0];
-	const e = myContract.events.ActionRequired({
-		filter: {
-			selectedAgent: defaultAccount
-		},
-		});
-		*/
-	const e = myContract.events.ActionRequired();
-	e.on('data', (event) => {
-		console.log('#end Time: ' + new Date().getTime())
-		console.log('Evento ricevuto:', event);
-		//fs.writeFileSync('/home/qbft/LOG.txt', event)
-		//web3.provider.disconnect();
-	});
-	e.on('error', (error) => {
-		console.error('Errore nel ricevere evento:', error);
-	});
+const pollForEvents = async () => {
+	let lastBlock = BigInt(await web3.eth.getBlockNumber());
+
+	setInterval(async () => {
+		try {
+			const currentBlock = BigInt(await web3.eth.getBlockNumber());
+			if (currentBlock <= lastBlock) return;
+
+			const fromBlock = lastBlock + 1n;
+			const events = await myContract.getPastEvents('ActionRequired', {
+				fromBlock: fromBlock.toString(),
+				toBlock: currentBlock.toString()
+			});
+
+			for (const event of events) {
+				const action = event.returnValues.actionToApply;
+				const agent = event.returnValues.selectedAgent;
+				const logMsg = `[${new Date().toISOString()}] ACTUATOR: Executing ${action} on agent ${agent}\n`;
+
+				console.log(logMsg);
+				fs.appendFileSync('/var/log/actuator.log', logMsg);
+			}
+
+			lastBlock = currentBlock;
+		} catch (err) {
+			console.error(`[${new Date().toISOString()}] Polling error: ${err.message}`);
+		}
+	}, POLL_INTERVAL_MS);
 };
 
 // Avvio dello script
-listenToEvents();
-
-
-
+pollForEvents();
