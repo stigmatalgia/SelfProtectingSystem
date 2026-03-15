@@ -1,0 +1,79 @@
+# Member0, uno dei 4 nodi member della blockchain.
+# A differenza dei validator, i member non partecipano al consenso (non votano o propongono blocchi).
+# I member 0, 1 e 2 agiscono come agenti per l'IDS, votando sullo stato del sistema nello smart contract.
+
+ip addr add 172.16.1.10/24 dev eth0
+ip addr add 10.99.0.11/24 dev eth1
+
+sysctl -w net.ipv4.ip_forward=1
+
+DATA_DIR=/data
+cd /home/qbft/
+
+# Copia i file del contratto generati da generate_blockchain.py nel container 
+mkdir -p /home/qbft/data
+cp -r $DATA_DIR/* /home/qbft/data/
+ls -la /home/qbft/data/
+
+# inizializza go-ethereum cosi' che crei le directory necessarie setuppa i log in /var/log/geth.log
+# copia i file di config finalmente in geth cosi' che possa utilizzarli al secondo avvio con i dati corretti
+geth --datadir data init data/genesis.json 2>&1 | tee -a /var/log/geth.log
+
+cp data/static-nodes.json data/geth/
+cp data/permissioned-nodes.json data/geth/
+cp data/nodekey data/geth/
+
+# estrae l'indirizzo del wallet per poterlo usare come variabile di ambiente
+export ADDRESS=$(grep -o '"address": *"[^"]*"' ./data/keystore/accountKeystore | grep -o '"[^"]*"$' | sed 's/"//g')
+export PRIVATE_CONFIG=ignore
+
+echo "Starting geth with account: $ADDRESS" | tee -a /var/log/geth.log
+
+# Lancia geth, un impiccio di configurazioni per ignorare le funzionalita' strettamente "economiche"
+# La rete e' statica e permissioned quindi gia' conosciamo i nodi da contattare, e' inutile fare discovery
+# intasa solo la rete durante l'avvio che e' gia' pesante di per se.
+geth --datadir data \
+    --nodiscover \
+    --verbosity 2 \
+    --syncmode full \
+    --nousb \
+    --networkid 2222 \
+    --port 30303 \
+    --unlock $ADDRESS \
+    --allow-insecure-unlock \
+    --password data/keystore/accountPassword \
+    2>&1 | tee -a /var/log/geth.log &
+
+# 30 secondi massimi per aspettare che geth entri in funzione.
+echo "Waiting for geth to start..."
+for i in {1..30}; do
+    if [ -S /home/qbft/data/geth.ipc ]; then
+        echo "Geth IPC socket ready"
+        break
+    fi
+    sleep 0.5
+done
+
+geth attach /home/qbft/data/geth.ipc --exec "admin.startHTTP('0.0.0.0', 8545, '*', 'admin,eth,net,web3,personal,miner,txpool')" 2>&1 | tee -a /var/log/geth.log
+
+echo "Waiting for contract details in /shared..."
+while [ ! -f /shared/contract_address.txt ] || [ ! -f /shared/contract_abi.json ]; do
+    sleep 0.5
+done
+
+echo "Found contract details, copying..."
+cp /shared/contract_address.txt /home/qbft/data/
+cp /shared/contract_abi.json /home/qbft/data/
+
+# Avvia l'API della blockchain per gestire le comunicazioni esterne (es. IDS)
+node /home/qbft/data/contract/blockchain_api.js 2>&1 | tee -a /var/log/blockchain_api.log &
+
+# Verifica l'esistenza dei metadati del contratto: se presenti, istanzia un listener in background.
+# legge gli eventi emessi dallo smart contract dai log di Geth.
+if [ -f /home/qbft/data/contract_abi.json ] && [ -f /home/qbft/data/contract_address.txt ]; then
+    ABI=$(cat /home/qbft/data/contract_abi.json)
+    CONTRACT=$(cat /home/qbft/data/contract_address.txt)
+    node /home/qbft/data/contract/contractSubscription.js "$ABI" "$CONTRACT" 2>&1 | tee -a /var/log/events.log &
+fi
+
+echo "Member0 startup complete"
