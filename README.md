@@ -119,3 +119,13 @@ It is assumed that the containers are unescapable and that the performed action 
    make clean-config
    ```
 
+**EXTRA, Testing commands!**
+
+```bash
+kathara exec attacker -- curl 'http://10.0.0.80:3000/rest/products/search?q=1=1'
+kathara exec attacker -- curl 'http://10.0.0.80:3000/rest/products/search?q=<script>alert(1)</script>'
+kathara exec attacker -- curl 'http://10.0.0.80:3000/rest/products/search?q=cat+/etc/passwd'
+kathara exec attacker -- curl --path-as-is 'http://10.0.0.80:3000/public/images/../../../../'
+
+kathara exec member3 -- sh -c "geth attach /home/qbft/data/geth.ipc --exec \"var addr = '$(cat shared/contract_address.txt | tr -d '[:space:]')'; var abi = [{'name':'statusMapDT','type':'function','inputs':[{'type':'string'}],'outputs':[{'type':'uint256'}]}]; var c = eth.contract(abi).at(addr); JSON.stringify({sql: c.statusMapDT.call('SQL_INJECTION').toNumber(), xss: c.statusMapDT.call('XSS_ATTACK').toNumber(), path: c.statusMapDT.call('PATH_TRAVERSAL').toNumber(), cmd: c.statusMapDT.call('COMMAND_INJECTION').toNumber()})\""
+```

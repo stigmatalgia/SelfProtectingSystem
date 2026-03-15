@@ -1,0 +1,21 @@
+# Attuatore, macchina che si occupa di gestire in blind l'esecuzione degli
+# ordini che gli vengono passati dalla blockchain su juice_shop
+ip addr add 172.16.4.1/24 dev eth0
+ip addr add 10.0.0.10/24 dev eth1
+ip addr add 10.0.100.10/24 dev eth2
+
+# Setup di file di configurazione necessari al server per log e connessione ssh, lancia poi il server.
+mkdir -p /var/log
+mkdir -p /root/.ssh
+chmod 700 /root/.ssh
+touch /var/log/actuator_actions.log
+
+cp /shared/ssh/actuator_id_ed25519 /root/.ssh/id_ed25519
+chmod 600 /root/.ssh/id_ed25519
+
+cp /shared/actuator_server.py /tmp/actuator_server.py
+
+echo "Starting blind actuator server on port 5000..."
+python3 /tmp/actuator_server.py &
+
+echo "Actuator startup complete"

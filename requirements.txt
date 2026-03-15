@@ -6,3 +6,4 @@ numpy~=2.2.2
 eth_utils
 setuptools~=69.5.1
 tqdm
+pycryptodome
