@@ -1,3 +1,0 @@
-FROM kathara/base
-RUN apt-get update && apt-get install -y suricata iproute2 curl
-RUN rm -rf /var/lib/apt/lists/*
