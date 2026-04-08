@@ -1,0 +1,93 @@
+# Validator0, uno dei 3 nodi che formano il consenso QBFT nella blockchain
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+export PYTHONIOENCODING=utf-8
+# riceve le richieste di azione dagli altri nodi membri
+# E' leader, e' il primo nodo a proporre blocchi
+
+ip addr add 10.99.0.1/24 dev eth0
+sysctl -w net.ipv4.ip_forward=1
+
+DATA_DIR=/data
+cd /home/qbft/
+
+# Copia i file del contratto generati da generate_blockchain.py nel container 
+mkdir -p /home/qbft/data
+cp -r $DATA_DIR/* /home/qbft/data/
+ls -la /home/qbft/data/
+
+# inizializza go-ethereum cosi' che crei le directory necessarie setuppa i log in /var/log/geth.log
+# copia i file di config finalmente in geth cosi' che possa utilizzarli al secondo avvio con i dati corretti
+geth --datadir data init data/genesis.json 2>&1 | tee -a /var/log/geth.log
+cp data/static-nodes.json data/geth/
+cp data/permissioned-nodes.json data/geth/
+cp data/nodekey data/geth/
+
+# estrae l'indirizzo del wallet per poterlo usare come variabile di ambiente
+export ADDRESS=$(grep -o '"address": *"[^"]*"' ./data/keystore/accountKeystore | grep -o '"[^"]*"$' | sed 's/"//g')
+export PRIVATE_CONFIG=ignore
+
+
+# Lancia geth, un impiccio di configurazioni per ignorare le funzionalita' strettamente "economiche"
+# La rete e' statica e permissioned quindi gia' conosciamo i nodi da contattare, e' inutile fare discovery
+# intasa solo la rete durante l'avvio che e' gia' pesante di per se.
+# P.S> --mine e' la differenza fra un membro e un validatore, significa poter partecipare al consenso
+echo "Starting geth with account: $ADDRESS" | tee -a /var/log/geth.log
+geth --datadir data \
+    --nodiscover \
+    --verbosity 2 \
+    --syncmode full \
+    --mine --miner.threads 1 --miner.gasprice 0 \
+    --nousb \
+    --networkid 2222 \
+    --port 30303 \
+    --unlock $ADDRESS \
+    --allow-insecure-unlock \
+    --password data/keystore/accountPassword \
+    2>&1 | tee -a /var/log/geth.log &
+
+# 30 secondi massimi per aspettare che geth entri in funzione.
+echo "Attesa avvio di geth..."
+for i in {1..30}; do
+    if [ -S /home/qbft/data/geth.ipc ]; then
+        echo "Socket IPC di Geth pronto"
+        break
+    fi
+    sleep 0.5
+done
+
+echo "Deploy dello smart contract IDS..."
+node /home/qbft/data/contract/compile_and_deploy_contract.js 2>&1 | tee /var/log/contract_deploy.log
+
+# 30 secondi massimi per aspettare che lo script di sopra finisca 
+for i in {1..30}; do
+    if [ -f /home/qbft/data/contract_address.txt ] && [ -f /home/qbft/data/contract_abi.json ]; then
+        echo "Artifact del contratto trovati."
+        break
+    fi
+    sleep 0.5
+done
+
+echo "Popolamento mappa State-Action..."
+# Esegue il mapping iniziale delle transizioni di stato
+node /home/qbft/data/contract/populate_action_map.js 2>&1 | tee /var/log/map_population.log
+
+CONTRACT_ADDR=$(cat /home/qbft/data/contract_address.txt)
+
+echo "Contratto deployato a: $CONTRACT_ADDR"
+
+# Copia i file di configurazione da quelli generati, sempre per evitare di hardcodare tutto.
+cp /home/qbft/data/contract_address.txt /shared/
+cp /home/qbft/data/contract_abi.json /shared/
+chmod 644 /shared/contract_address.txt /shared/contract_abi.json
+
+# Verifica l'esistenza dei metadati del contratto: se presenti, istanzia un listener in background.
+# legge gli eventi emessi dallo smart contract dai log di Geth.
+geth attach /home/qbft/data/geth.ipc --exec "admin.startHTTP('0.0.0.0', 8545, '*', 'admin,eth,net,web3,personal,miner,txpool')" 2>&1 | tee -a /var/log/geth.log
+if [ -f /home/qbft/data/contract_abi.json ] && [ -f /home/qbft/data/contract_address.txt ]; then
+    ABI=$(cat /home/qbft/data/contract_abi.json)
+    CONTRACT=$(cat /home/qbft/data/contract_address.txt)
+    node /home/qbft/data/contract/contractSubscription.js "$ABI" "$CONTRACT" 2>&1 | tee -a /var/log/events.log &
+fi
+
+echo "Validator0 startup complete"

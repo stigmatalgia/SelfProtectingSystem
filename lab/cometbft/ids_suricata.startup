@@ -1,0 +1,48 @@
+# Ids_suricata, uno dei 3 ids, rileva attacchi sniffando la rete che collega
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+export PYTHONIOENCODING=utf-8
+# juice_shop all'esterno, se rileva un'attacco tra quelli nelle signature
+# in lista, lo script alert_sender invia al suo light node associato in blockchain
+# un alert sullo stato, si occupa in alert_sender anche di revertare lo stato a safe
+# assumendo che la response riesca sempre a mitigare l'attacco.
+
+ip addr add 172.16.2.1/24 dev eth0
+ip addr add 10.0.100.12/24 dev eth2
+ip link set eth1 up
+ip link set eth1 promisc on
+
+mkdir -p /var/log/suricata /etc/suricata/rules
+
+# Lista delle signature valide
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: SQL_INJECTION Attempt"; content:"1=1"; nocase; sid:1000001; rev:1;)' > /etc/suricata/rules/local.rules
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: SQL_INJECTION Attempt URL Encoded"; content:"1%3D1"; nocase; sid:1000002; rev:1;)' >> /etc/suricata/rules/local.rules
+
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: XSS_ATTACK Attempt"; content:"<script>"; nocase; sid:1000003; rev:1;)' >> /etc/suricata/rules/local.rules
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: XSS_ATTACK Attempt Encoded"; content:"%3Cscript%3E"; nocase; sid:1000006; rev:1;)' >> /etc/suricata/rules/local.rules
+
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: PATH_TRAVERSAL Attempt"; content:"../"; nocase; sid:1000004; rev:1;)' >> /etc/suricata/rules/local.rules
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: PATH_TRAVERSAL Attempt Encoded"; content:"%2E%2E%2F"; nocase; sid:1000007; rev:1;)' >> /etc/suricata/rules/local.rules
+
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: COMMAND_INJECTION Attempt"; content:"/etc/passwd"; nocase; sid:1000005; rev:1;)' >> /etc/suricata/rules/local.rules
+echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: COMMAND_INJECTION Attempt Encoded"; content:"%2Fetc%2Fpasswd"; nocase; sid:1000008; rev:1;)' >> /etc/suricata/rules/local.rules
+
+ulimit -n 65535
+
+suricata -S /etc/suricata/rules/local.rules --pcap=eth1 --runmode single -l /var/log/suricata &
+
+echo "IDS Suricata avviato"
+
+MEMBER_IP="172.16.2.10"
+
+cp /shared/alert_sender.sh /tmp/alert_sender.sh
+chmod +x /tmp/alert_sender.sh
+
+# Esegue il server puntando al light node associato
+echo "Avvio inoltro alert blockchain..."
+python3 /shared/alert_forwarder.py /var/log/suricata/fast.log $MEMBER_IP suricata &
+
+echo "Avvio server di feedback..."
+cp /shared/ids_feedback_server.py /tmp/ids_feedback_server.py
+python3 /tmp/ids_feedback_server.py /var/log/suricata/fast.log &
+

@@ -1,0 +1,7 @@
+# Attacker, simula un attore esterno al sistema che fa uso
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
+export PYTHONIOENCODING=utf-8
+# Del servizio juice_shop sul quale performa attacchi.
+ip addr add 192.168.1.10/24 dev eth0
+ip route add default via 192.168.1.254
