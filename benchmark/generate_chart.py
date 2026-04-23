@@ -36,18 +36,18 @@ def main():
     
     # Inietta SAFE_ENVIRONMENT prima della run per esser sicuri di azzerare i blocchi dedup in sospeso
     # eventualmente lasciati in canna dalle run precedenti (ex. blockchain_benchmark)
+    # IMPORTANTE: In Quorum (e CometBFT) serve il consenso della maggioranza, quindi resettiamo tutti i nodi.
     print("Resetting blockchain node state to SAFE_ENVIRONMENT prima di simulare...")
-    reset_node = "light0" if lab_type == "cometbft" else "member0"
-    cmd_reset = (
-        f"kathara exec -d {args.lab_dir} {reset_node} -- "
-        "curl -s --connect-timeout 2 --max-time 5 -X POST -H 'Content-Type: application/json' "
-        "-d '[{\"type\": \"SAFE_ENVIRONMENT\", \"value\": 1}]' http://localhost:3000/alert"
-    )
-    reset_out = run_shell(cmd_reset, timeout_s=12, label="SAFE_ENVIRONMENT reset")
-    if reset_out and reset_out.returncode != 0:
-        err = (reset_out.stderr or "").strip()
-        if err:
-            print(f"Warning: reset command failed: {err}")
+    reset_nodes = ["light0", "light1", "light2"] if lab_type == "cometbft" else ["member0", "member1", "member2"]
+    
+    for node in reset_nodes:
+        cmd_reset = (
+            f"kathara exec -d {args.lab_dir} {node} -- "
+            "curl -s --connect-timeout 2 --max-time 2 -X POST -H 'Content-Type: application/json' "
+            "-d '[{\"type\": \"SAFE_ENVIRONMENT\", \"value\": 1}]' http://localhost:3000/alert"
+        )
+        run_shell(cmd_reset, timeout_s=5, label=f"SAFE_ENVIRONMENT reset {node}")
+    
     time.sleep(2)
 
     deltas = []

@@ -291,7 +291,7 @@ def get_node_tx_count(lab_dir: str, node: str, lab_type: str) -> int:
 def wait_for_tx_quiescence(
     lab_dir: str,
     lab_type: str,
-    max_wait_s: int = 45,
+    max_wait_s: int = 5,
     poll_s: float = 1.0,
     stable_ticks: int = 5,
 ) -> int:

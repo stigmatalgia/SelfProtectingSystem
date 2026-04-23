@@ -97,8 +97,8 @@ def main():
 
     snort_ts = parse_ids_time(
         f"kathara exec -d {args.lab_dir} ids_snort -- cat /var/log/snort/alert_fast.txt", 
-        r'^(\d{2}/\d{2}(?:/\d{2})?-\d{2}:\d{2}:\d{2}\.\d+)', 
-        ["%y/%m/%d-%H:%M:%S.%f", "%y/%m/%d-%H:%M:%S"], args.since
+        r'^(\d{2,4}/\d{2}/\d{2}-\d{2}:\d{2}:\d{2}(?:\.\d+)?)', 
+        ["%Y/%m/%d-%H:%M:%S.%f", "%y/%m/%d-%H:%M:%S.%f", "%Y/%m/%d-%H:%M:%S", "%y/%m/%d-%H:%M:%S"], args.since
     )
     suricata_ts = parse_ids_time(
         f"kathara exec -d {args.lab_dir} ids_suricata -- cat /var/log/suricata/fast.log",

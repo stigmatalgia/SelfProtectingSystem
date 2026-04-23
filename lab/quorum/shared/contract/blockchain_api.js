@@ -123,7 +123,8 @@ function enqueueAlert(data) {
 
     const value = data.value !== undefined ? data.value : 1;
 
-    if (lastVotedState[type] === value) {
+    const dedupDisabled = fs.existsSync('/shared/disable_ledger_dedup');
+    if (!dedupDisabled && lastVotedState[type] === value) {
         return { success: true, status: 'deduplicated', type, value };
     }
 
