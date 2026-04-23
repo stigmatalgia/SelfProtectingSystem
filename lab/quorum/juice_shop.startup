@@ -20,4 +20,7 @@ chmod 600 /root/.ssh/authorized_keys
 
 /usr/sbin/sshd &
 
-echo "juice_shop SSH server ready"
+# Start the Juice Shop service
+cd /juice-shop && npm start &
+
+echo "juice_shop service and SSH server ready"

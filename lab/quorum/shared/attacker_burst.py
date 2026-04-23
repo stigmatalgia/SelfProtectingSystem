@@ -1,16 +1,20 @@
+# Script per simulare una raffica di attacchi (SQLi, XSS, ecc.) verso il Juice Shop.
+# Utilizzato per testare la capacità di rilevamento e risposta del sistema sotto carico.
+
 import random
 import sys
-import os
+import subprocess
 import time
+import urllib.request
 import http.client
-from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 
 # Target configuration
 TARGET_HOST = "10.0.0.80"
+
 TARGET_PORT = 3000
 
-# Randomized curl commands as requested
+# Comandi curl casuali per simulare diversi tipi di attacco
 CURL_COMMANDS = [
     f"curl -s -o /dev/null -w '%{{http_code}}' 'http://{TARGET_HOST}:{TARGET_PORT}/rest/products/search?q=1=1'",
     f"curl -s -o /dev/null -w '%{{http_code}}' 'http://{TARGET_HOST}:{TARGET_PORT}/rest/products/search?q=<script>alert(1)</script>'",
@@ -19,25 +23,18 @@ CURL_COMMANDS = [
 ]
 
 def send_request(idx):
-    """Sends a single randomized attack request using http.client and logs result."""
-    paths = [
-        "/rest/products/search?q=1=1",
-        "/rest/products/search?q=<script>alert(1)</script>",
-        "/rest/products/search?q=cat+/etc/passwd",
-        "/public/images/../../../../"
-    ]
-    path = random.choice(paths)
+    """Invia una singola richiesta di attacco casuale e logga il risultato."""
+    cmd = random.choice(CURL_COMMANDS)
     
     try:
-        # Usiamo http.client per evitare il fork di curl che è pesantissimo
-        conn = http.client.HTTPConnection(TARGET_HOST, TARGET_PORT, timeout=5)
-        conn.request("GET", path)
-        res = conn.getresponse()
-        status = res.status
-        res.read() # Consuma la risposta
-        conn.close()
+        # We use subprocess to execute the exact curl command
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+        status = res.stdout.strip()
+        print(f"[Attack {idx}] HTTP {status}", flush=True)
+    except subprocess.TimeoutExpired:
+        print(f"[Attack {idx}] TIMEOUT", flush=True)
     except Exception as e:
-        print(f"[Attack {idx}] ERROR: {str(e)}", flush=True)
+        print(f"[Attack {idx}] EXCEPTION: {str(e)}", flush=True)
 
 def main():
     if len(sys.argv) < 2:
@@ -53,20 +50,17 @@ def main():
     print(f"--- Attacker Diagnostic Burst START (N={n}) ---", flush=True)
     print(f"Target: {TARGET_HOST}:{TARGET_PORT}", flush=True)
     
-    # Check connectivity first
+    # Controllo preliminare della connettività
     try:
-        conn = http.client.HTTPConnection(TARGET_HOST, TARGET_PORT, timeout=5)
-        conn.request("GET", "/")
-        res = conn.getresponse()
-        print(f"Pre-burst connectivity test: HTTP {res.status}", flush=True)
-        res.read()
-        conn.close()
+        req = urllib.request.Request(f"http://{TARGET_HOST}:{TARGET_PORT}", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            print(f"Pre-burst connectivity test: HTTP {response.getcode()}", flush=True)
     except Exception as e:
         print(f"Pre-burst connectivity test FAILED: {str(e)}", flush=True)
 
     start_time = time.time()
     
-    # Increase max_workers to 200 for better burst density in high-N scenarios
+    # Imposta max_workers a 200 per una maggiore densità di traffico
     max_workers = min(200, n)
     print(f"Firing {n} attacks using {max_workers} threads...", flush=True)
     

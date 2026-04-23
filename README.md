@@ -134,31 +134,29 @@ Results are saved as JSON data and PNG charts within the `benchmark/result/<lab_
    # To start the CometBFT environment
    make cometbft setup
    ```
-   
-   *(To test the loop by yourself during a running simulation)*:
-   ```bash
-   #TODO: Add more signatures, currently only SQL Injection is detectable
-   kathara exec attacker -- curl 'http://10.0.0.80:3000/rest/products/search?q=1=1'
-   ```
 
-4. **Clean up the temp files and stop the lab:**
+3. **Clean up the temp files and stop the lab:**
    ```bash
    make clean-config
    ```
 
-5. **Run the Benchmark Suite (Requires a running Lab):**
-   Measure the response time of a single simulated attack:
+4. **Run the Benchmark Suite:**
+   You can easily run the entire suite of benchmarks on both Quorum and CometBFT sequentially using a single command. This will automatically setup, benchmark, and clean the environments, and finally generate all comparative performance charts in the `benchmark/result/` folder:
    ```bash
-   make quorum measure
-   # or
-   make cometbft measure
+   make all-benchmarks
    ```
-   
-   Automate multiple attacks and generate a boxplot chart (e.g., simulating 10 attacks):
+
+   *Alternatively, you can run individual benchmark commands on a running lab:*
    ```bash
-   make quorum chart N=10
-   # or
-   make cometbft chart N=10
+   
+   # Generate sequential attack boxplot data (e.g., 10 attacks)
+   make <quorum|cometbft> chart N=10
+   
+   # Run system capacity and throughput test
+   make <quorum|cometbft> capacity
+   
+   # Run native blockchain transaction test
+   make <quorum|cometbft> blockchain-benchmark
    ```
 
 **EXTRA, Testing commands!**

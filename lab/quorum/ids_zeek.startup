@@ -11,6 +11,7 @@ ip addr add 172.16.3.1/24 dev eth0
 ip addr add 10.0.100.13/24 dev eth2
 ip link set eth1 up
 ip link set eth1 promisc on
+ethtool -K eth1 gro off lro off gso off tso off 2>/dev/null || true
 
 mkdir -p /var/log/zeek
 cd /var/log/zeek

@@ -18,8 +18,9 @@ let txNonce = null;
 let txQueue = [];
 let isSending = false;
 let activeTxCount = 0;
-const MAX_CONCURRENT_TX = 32;
+const MAX_CONCURRENT_TX = 12;
 const MAX_RETRIES = 5;       // Maximum retry attempts for failed transactions
+const MAX_QUEUE_LENGTH = 25000;
 let totalAlertsProcessed = 0;
 let totalAlertsReceived = 0;
 
@@ -49,6 +50,10 @@ async function waitFor(path, timeout = 60000) {
 async function init() {
     await waitFor(IPC_PATH);
     web3 = new Web3(new IpcProvider(IPC_PATH));
+    // Under heavy load, blocks can lag; avoid treating pending tx as fatal too early.
+    web3.eth.transactionBlockTimeout = 2000;
+    web3.eth.transactionPollingInterval = 1000;
+    web3.eth.transactionPollingTimeout = 3600;
 
     // Attesa che geth sia pronto
     while (true) {
@@ -126,7 +131,7 @@ function enqueueAlert(data) {
     lastAlertTime = Date.now();
     currentAlertId++;
 
-    return { success: true, status: 'batched', alertId: currentAlertId, type, value, stressMode };
+    return { success: true, status: 'batched', alertId: currentAlertId, type, value };
 }
 
 async function stressAlert(data) {
@@ -159,13 +164,19 @@ async function processBatch() {
     let snapshot = { ...batchBuffer };
     batchBuffer = {};
 
-    let finalParams = params;
-    let finalValues;
+    let finalParams = [];
+    let finalValues = [];
+    
+    const ATTACK_PARAMS = ['SQL_INJECTION', 'XSS_ATTACK', 'PATH_TRAVERSAL', 'COMMAND_INJECTION'];
 
+    // SAFE_ENVIRONMENT is a control signal: when present, reset all attack parameters to 0
+    // NEVER send SAFE_ENVIRONMENT itself to the contract (it's not a state parameter in IDS.sol)
     if (snapshot['SAFE_ENVIRONMENT']) {
-        finalParams = VALID_ALERTS.filter(a => a !== 'SAFE_ENVIRONMENT');
+        finalParams = ATTACK_PARAMS;
         finalValues = finalParams.map(() => 0);
     } else {
+        // Only send the 4 attack parameters, filter out SAFE_ENVIRONMENT if present
+        finalParams = ATTACK_PARAMS.filter(p => snapshot.hasOwnProperty(p));
         finalValues = finalParams.map(p => snapshot[p]);
     }
 
@@ -175,9 +186,13 @@ async function processBatch() {
         });
 
         if (snapshot['SAFE_ENVIRONMENT']) {
-            VALID_ALERTS.forEach(a => lastVotedState[a] = 0);
+            ATTACK_PARAMS.forEach(a => lastVotedState[a] = 0);
         } else {
-            Object.assign(lastVotedState, snapshot);
+            ATTACK_PARAMS.forEach(p => {
+                if (snapshot.hasOwnProperty(p)) {
+                    lastVotedState[p] = snapshot[p];
+                }
+            });
         }
         totalAlertsProcessed += finalParams.length;
     } catch (error) {
@@ -196,7 +211,7 @@ async function processTxQueue() {
 
         console.log(`[TX] Sending (${req.params.join(',')}) with nonce ${currentNonce}... (Queue: ${txQueue.length}, Active: ${activeTxCount})`);
 
-        contract.methods.proposeNewValues(req.params, req.values).send({
+        const promi = contract.methods.proposeNewValues(req.params, req.values).send({
             from: account,
             gas: 1000000,
             gasPrice: '0',
@@ -213,6 +228,16 @@ async function processTxQueue() {
                 console.error(`[TX] Error (nonce: ${currentNonce}):`, err.message);
                 activeTxCount--;
 
+                const isBlockTimeout =
+                    err && (err.code === 432 || String(err.message || '').includes('TransactionBlockTimeoutError'));
+                if (isBlockTimeout) {
+                    // The tx may still be pending/mined later; do not crash or retry-storm.
+                    console.warn(`[TX] Timeout waiting for mining (nonce: ${currentNonce}); continuing.`);
+                    req.resolve('timeout-pending');
+                    process.nextTick(processTxQueue);
+                    return;
+                }
+
                 try {
                     const chainNonce = Number(await web3.eth.getTransactionCount(account));
                     if (chainNonce !== txNonce) {
@@ -225,7 +250,7 @@ async function processTxQueue() {
                     req.retryCount++;
                     console.warn(`[TX] Retry ${req.retryCount}/${MAX_RETRIES} for transaction (nonce was: ${currentNonce}) in 500ms...`);
                     setTimeout(() => {
-                        txQueue.unshift(req); // Prioritize retries
+                        txQueue.push(req); // Avoid head-of-line retry storms
                         processTxQueue();
                     }, 500);
                 } else {
@@ -234,11 +259,18 @@ async function processTxQueue() {
                     process.nextTick(processTxQueue);
                 }
             });
+
+        // Prevent unhandled Promise rejection from terminating the Node process.
+        promi.catch(() => {});
     }
 }
 
 function sendToBlockchain(params, values) {
     return new Promise((resolve, reject) => {
+        if (txQueue.length >= MAX_QUEUE_LENGTH) {
+            reject(new Error('Tx queue overloaded'));
+            return;
+        }
         txQueue.push({ params, values, resolve, reject, retryCount: 0 });
         processTxQueue();
     });
@@ -251,9 +283,18 @@ const server = http.createServer((req, res) => {
         req.on('data', c => body += c);
         req.on('end', () => {
             try {
-                const result = enqueueAlert(JSON.parse(body));
-                res.writeHead(202);
-                res.end(JSON.stringify(result));
+                const parsed = JSON.parse(body);
+                if (Array.isArray(parsed)) {
+                    parsed.forEach(alert => {
+                        try { enqueueAlert(alert); } catch (err) { }
+                    });
+                    res.writeHead(202);
+                    res.end(JSON.stringify({ success: true, status: 'batched array mode', count: parsed.length }));
+                } else {
+                    const result = enqueueAlert(parsed);
+                    res.writeHead(202);
+                    res.end(JSON.stringify(result));
+                }
             } catch (e) {
                 res.writeHead(400);
                 res.end(JSON.stringify({ error: e.message }));
@@ -289,6 +330,13 @@ const server = http.createServer((req, res) => {
 });
 
 (async () => {
+    process.on('unhandledRejection', (reason) => {
+        console.error('[UNHANDLED_REJECTION]', reason && reason.message ? reason.message : reason);
+    });
+    process.on('uncaughtException', (err) => {
+        console.error('[UNCAUGHT_EXCEPTION]', err && err.message ? err.message : err);
+    });
+
     try {
         await init();
         server.listen(PORT, '0.0.0.0', () => console.log(`Quorum API on :${PORT} Ready`));

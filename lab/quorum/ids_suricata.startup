@@ -11,6 +11,7 @@ ip addr add 172.16.2.1/24 dev eth0
 ip addr add 10.0.100.12/24 dev eth2
 ip link set eth1 up
 ip link set eth1 promisc on
+ethtool -K eth1 gro off lro off gso off tso off 2>/dev/null || true
 
 mkdir -p /var/log/suricata /etc/suricata/rules
 
@@ -27,8 +28,7 @@ echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: PATH_TRAVERSAL Attempt E
 echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: COMMAND_INJECTION Attempt"; content:"/etc/passwd"; nocase; sid:1000005; rev:1;)' >> /etc/suricata/rules/local.rules
 echo 'alert tcp any any -> any 3000 (msg:"IDS-SURICATA: COMMAND_INJECTION Attempt Encoded"; content:"%2Fetc%2Fpasswd"; nocase; sid:1000008; rev:1;)' >> /etc/suricata/rules/local.rules
 
-suricata -S /etc/suricata/rules/local.rules --pcap=eth1 --runmode single -l /var/log/suricata &
-
+suricata -S /etc/suricata/rules/local.rules --af-packet=eth1 --runmode workers -l /var/log/suricata &
 echo "Suricata IDS started"
 
 MEMBER_IP="172.16.2.10"

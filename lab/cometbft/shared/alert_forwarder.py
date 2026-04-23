@@ -29,6 +29,7 @@ if len(sys.argv) < 4:
 LOG_FILE = sys.argv[1]
 VALIDATOR_IP = sys.argv[2]
 IDS_NAME = sys.argv[3]
+DISABLE_NEGATIVE_MARKER = "/shared/disable_negative_alerts"
 
 ALERTS = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"]
 
@@ -49,9 +50,18 @@ def forwarder_worker(worker_id):
     connect()
     
     while True:
-        # Prende l'alert dalla coda (si blocca se è vuota)
-        payload = alert_queue.get()
-        data = json.dumps(payload).encode('utf-8')
+        batch = []
+        try:
+            batch.append(alert_queue.get(timeout=1.0))
+            while len(batch) < 100:
+                batch.append(alert_queue.get_nowait())
+        except queue.Empty:
+            pass
+
+        if not batch:
+            continue
+
+        data = json.dumps(batch).encode('utf-8')
         
         success = False
         retries = 3
@@ -63,7 +73,7 @@ def forwarder_worker(worker_id):
                 response = conn.getresponse()
                 response.read() # Leggiamo la risposta per liberare il socket
                 
-                if response.status in [200, 202]:
+                if response.status in [200, 202, 201]:
                     success = True
                 else:
                     retries -= 1
@@ -73,13 +83,13 @@ def forwarder_worker(worker_id):
                 retries -= 1
                 time.sleep(0.1)
                 
-        alert_queue.task_done()
+        for _ in batch:
+            alert_queue.task_done()
 
 def follow(file_path):
     while True:
         line = file_path.readline()
         if not line:
-            time.sleep(0.05)
             continue
         yield line
 
@@ -90,8 +100,8 @@ def main():
     while not os.path.exists(LOG_FILE):
         time.sleep(1)
 
-    # Avviamo 50 worker persistenti
-    for i in range(50):
+    # Avviamo 10 worker (sufficienti visto che ora inviamo in batch da 100)
+    for i in range(10):
         t = threading.Thread(target=forwarder_worker, args=(i,), daemon=True)
         t.start()
 
@@ -102,6 +112,8 @@ def main():
             
             # Recupero (Negative alert)
             if "negative alert: " in line_lower:
+                if os.path.exists(DISABLE_NEGATIVE_MARKER):
+                    continue
                 try:
                     alert_type = line.split("NEGATIVE ALERT: ")[1].strip()
                     payload = {

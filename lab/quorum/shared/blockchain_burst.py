@@ -5,16 +5,37 @@ import urllib.request
 import json
 from concurrent.futures import ThreadPoolExecutor
 
+import threading
+import http.client
+
+# Thread-local for persistent connections
+thread_local = threading.local()
+
+def get_connection(target_ip):
+    # We use a dict in thread_local to handle multiple target IPs per thread
+    if not hasattr(thread_local, "conns"):
+        thread_local.conns = {}
+    if target_ip not in thread_local.conns:
+        thread_local.conns[target_ip] = http.client.HTTPConnection(target_ip, 3000, timeout=10)
+    return thread_local.conns[target_ip]
+
 def send_request(idx, target_ip):
-    url = f"http://{target_ip}:3000/stress"
-    # Send empty or generic data
-    data = json.dumps({"type": "SQL_INJECTION", "value": 1}).encode('utf-8')
+    """Sends a stress request reusing a persistent connection."""
+    conn = get_connection(target_ip)
+    payload = json.dumps({"type": "SQL_INJECTION", "value": 1}).encode('utf-8')
+    
     try:
-        req = urllib.request.Request(url, data=data, method="POST", headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            pass 
+        headers = {'Content-Type': 'application/json', 'Connection': 'keep-alive'}
+        conn.request("POST", "/stress", body=payload, headers=headers)
+        res = conn.getresponse()
+        res.read()
     except Exception:
-        pass
+        # Re-init connection on failure
+        try:
+            conn.close()
+        except:
+            pass
+        thread_local.conns[target_ip] = http.client.HTTPConnection(target_ip, 3000, timeout=10)
 
 def main():
     if len(sys.argv) < 2:

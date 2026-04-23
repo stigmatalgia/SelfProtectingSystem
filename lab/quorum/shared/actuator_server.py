@@ -24,7 +24,7 @@ ATTACK_MAP     = {
 
 logging.basicConfig(
     level=logging.INFO,
-    format="[%(asctime)s] %(message)s",
+    format="[%(asctime)s.%(msecs)03d] %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
     handlers=[logging.StreamHandler(), logging.FileHandler(LOG_FILE)],
 )

@@ -70,7 +70,18 @@ def generate_blockchain_configurations():
     os.remove(tar_path)
     
     generated_configurations_path = os.path.join(configurations_path, "shared")
-    return os.path.join(generated_configurations_path, os.listdir(generated_configurations_path)[0])
+    # Search for the directory containing goQuorum (usually a timestamped folder)
+    for root, dirs, _ in os.walk(generated_configurations_path):
+        if "goQuorum" in dirs:
+            return root
+    
+    # Fallback to the first subdirectory if goQuorum is not found
+    subdirs = [os.path.join(generated_configurations_path, d) for d in os.listdir(generated_configurations_path) 
+               if os.path.isdir(os.path.join(generated_configurations_path, d))]
+    if subdirs:
+        return subdirs[0]
+        
+    return generated_configurations_path
 
 
 def generate_config(configurations_path: str, parameters: list[str]):
@@ -223,6 +234,8 @@ if __name__ == "__main__":
     try:
         generate_ssh_keys()
         config_path = generate_blockchain_configurations()
+        # Only pass the 4 attack types as state parameters, not SAFE_ENVIRONMENT
+        # SAFE_ENVIRONMENT is a control signal handled separately, not part of the state vector
         generate_config(config_path, ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"])
     except Exception as e:
         logger.error(f"Failed to generate configuration: {e}")

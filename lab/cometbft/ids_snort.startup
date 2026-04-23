@@ -52,7 +52,7 @@ chmod +x /tmp/alert_sender.py
 
 # Esegue il server puntando al light node associato
 echo "Avvio inoltro alert blockchain..."    
-python3 /shared/alert_forwarder.py /var/log/snort/alert_fast.txt $MEMBER_IP suricata &
+python3 /shared/alert_forwarder.py /var/log/snort/alert_fast.txt $MEMBER_IP snort &
 
 echo "Avvio server di feedback..."
 cp /shared/ids_feedback_server.py /tmp/ids_feedback_server.py

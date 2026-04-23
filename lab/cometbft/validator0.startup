@@ -1,6 +1,7 @@
-# Validator0, uno dei 3 nodi che formano il consenso CometBFT nella blockchain
-# riceve le richieste di azione dagli altri nodi membri
-# E' leader, e' il primo nodo a proporre blocchi
+#!/bin/bash
+# validator0 — BFT consensus node, blockchain leader.
+# Runs sps-node in "validator" role. Deploys action map via admin endpoint.
+# No EVM, no Solidity, no evmosd.
 
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
@@ -10,116 +11,40 @@ ip addr add 10.99.0.1/24 dev eth0
 sysctl -w net.ipv4.ip_forward=1
 
 DATA_DIR=/data
-cd /home/cometbft/
-
 mkdir -p /home/cometbft/data
-cp -r $DATA_DIR/* /home/cometbft/data/
-ls -la /home/cometbft/data/
+cp -r "$DATA_DIR"/config.toml /home/cometbft/data/config.toml
 
-# Extract hex address from keyring-test (filename is the hex address)
-VALIDATOR0_HEX=$(ls /home/cometbft/data/keyring-test/*.address 2>/dev/null | head -n 1 | xargs basename | cut -d. -f1 | tr '[:upper:]' '[:lower:]')
-echo "Validator0 Hex Address: 0x$VALIDATOR0_HEX"
+# ── Start sps-node ──────────────────────────────────────────────────────────
+echo "Starting sps-node (validator0)..." >> /var/log/sps-node.log
+sps-node --config /home/cometbft/data/config.toml >> /var/log/sps-node.log 2>&1 &
+SPS_PID=$!
 
-# evmosd looks for config in ~/.evmosd by default. We'll point it to our data dir explicitly.
-echo "Starting evmosd..." >> /var/log/evmosd.log
-evmosd start \
-    --home /home/cometbft/data \
-    --json-rpc.address 0.0.0.0:8545 \
-    --json-rpc.ws-address 0.0.0.0:8546 \
-    --json-rpc.api eth,net,web3,txpool,personal \
-    --json-rpc.enable \
-    --keyring-backend test \
-    --api.enable \
-    --minimum-gas-prices 0aevmos \
-    >> /var/log/evmosd.log 2>&1 &
-
-echo "Waiting for evmosd JSON-RPC to start..."
-RPC_READY=false
-for i in {1..60}; do
-    RESPONSE=$(curl -s http://localhost:8545 -X POST -H "Content-Type: application/json" \
-        -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' 2>/dev/null)
-    
-    # Check if we have a non-zero block number (means chain is producing blocks)
-    BLOCK_HEX=$(echo "$RESPONSE" | grep -oP '"result":"\K[^"]+')
-    
-    if [ "$BLOCK_HEX" != "" ] && [ "$BLOCK_HEX" != "0x0" ]; then
-        echo "JSON-RPC ready and producing blocks (Block: $BLOCK_HEX) after ${i}s"
-        RPC_READY=true
+# ── Wait for API to become ready ────────────────────────────────────────────
+echo "Waiting for sps-node API..."
+API_READY=false
+for i in $(seq 1 30); do
+    if curl -sf http://localhost:3000/alive > /dev/null 2>&1; then
+        echo "sps-node API ready after ${i}s"
+        API_READY=true
         break
     fi
-    
-    if ! pgrep -f "evmosd start" > /dev/null; then
-        echo "ERROR: evmosd process died. Last logs:"
-        tail -n 50 /var/log/evmosd.log
+    if ! kill -0 "$SPS_PID" 2>/dev/null; then
+        echo "ERROR: sps-node exited early:"
+        tail -n 30 /var/log/sps-node.log
         break
     fi
-    
-    # Progress indicator
-    if (( i % 5 == 0 )); then
-        echo "Waiting for blocks... Recent response: $RESPONSE"
-    fi
-    
     sleep 1
 done
 
-if [ "$RPC_READY" != "true" ]; then
-    echo "ERROR: evmosd JSON-RPC did not become ready within 60s"
-    echo "Check /var/log/evmosd.log for details"
-    echo "Validator0 startup complete (with errors)"
+if [ "$API_READY" != "true" ]; then
+    echo "ERROR: sps-node API did not become ready within 30s"
+    tail -n 30 /var/log/sps-node.log
     exit 0
 fi
 
-# Wait a few extra seconds for the chain to stabilize
-sleep 3
+# ── Trigger action-map population (built-in to sps-node, this is a no-op) ──
+curl -sf -X POST http://localhost:3000/admin/populate_map >> /var/log/sps-node.log 2>&1
 
-echo "Deploying IDS smart contract..."
-
-# Estraiamo la chiave privata in formato esadecimale non armato (unarmored-hex)
-# Attenzione: lo script python chiama la chiave di validator0 "node0"
-# Passiamo 'y' automaticamente per confermare l'esportazione unsafe
-VALIDATOR0_PRIVKEY=$(echo "y" | evmosd keys export node0 --home /home/cometbft/data --keyring-backend test --unsafe --unarmored-hex 2>/dev/null)
-if [ -z "$VALIDATOR0_PRIVKEY" ]; then
-    echo "ERROR: Impossibile esportare la chiave privata per node0." >> /var/log/contract_deploy.log
-else
-    # Passiamo la chiave privata allo script JS invece dell'indirizzo
-    node /home/cometbft/data/contract/compile_and_deploy_contract.js "$VALIDATOR0_PRIVKEY" >> /var/log/contract_deploy.log 2>&1
-fi
-
-DEPLOY_EXIT=$?
-
-if [ $DEPLOY_EXIT -ne 0 ]; then
-    echo "ERROR: Contract deployment failed (exit code $DEPLOY_EXIT). Log:"
-    cat /var/log/contract_deploy.log
-fi
-
-# Verify contract artifacts were created
-if [ ! -f /home/cometbft/data/contract_address.txt ] || [ ! -f /home/cometbft/data/contract_abi.json ]; then
-    echo "ERROR: Contract artifacts not found after deployment."
-    echo "--- contract_deploy.log ---"
-    cat /var/log/contract_deploy.log
-    echo "--- end log ---"
-else
-    echo "Contract artifacts found."
-
-    echo "Populating State-Action map..."
-    # Esegue il mapping iniziale delle transizioni di stato
-    node /home/cometbft/data/contract/populate_action_map.js "$VALIDATOR0_PRIVKEY" >> /var/log/map_population.log 2>&1
-
-    CONTRACT_ADDR=$(cat /home/cometbft/data/contract_address.txt)
-    echo "Contract deployed at: $CONTRACT_ADDR"
-
-    # Copia i file di configurazione da quelli generati, sempre per evitare di hardcodare tutto.
-    cp /home/cometbft/data/contract_address.txt /shared/
-    cp /home/cometbft/data/contract_abi.json /shared/
-    chmod 644 /shared/contract_address.txt /shared/contract_abi.json
-fi
-
-# Verifica l'esistenza dei metadati del contratto: se presenti, istanzia un listener in background.
-# legge gli eventi emessi dallo smart contract dai log di Geth.
-if [ -f /home/cometbft/data/contract_abi.json ] && [ -f /home/cometbft/data/contract_address.txt ]; then
-    ABI=$(cat /home/cometbft/data/contract_abi.json)
-    CONTRACT=$(cat /home/cometbft/data/contract_address.txt)
-    node /home/cometbft/data/contract/contractSubscription.js "$ABI" "$CONTRACT" >> /var/log/events.log 2>&1 &
-fi
-
-echo "Validator0 startup complete"
+# ── Signal readiness to other nodes ────────────────────────────────────────
+touch /shared/chain_ready
+echo "validator0 startup complete"

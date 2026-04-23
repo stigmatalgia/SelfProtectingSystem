@@ -8,6 +8,7 @@ ip addr add 172.16.1.1/24 dev eth0
 ip addr add 10.0.100.11/24 dev eth2
 ip link set eth1 up
 ip link set eth1 promisc on
+ethtool -K eth1 gro off lro off gso off tso off 2>/dev/null || true
 
 mkdir -p /etc/snort/rules /var/log/snort /usr/local/etc/snort
 chmod -R 777 /var/log/snort
@@ -52,7 +53,7 @@ chmod +x /tmp/alert_sender.py
 
 # Esegue il server puntando al light node associato
 echo "Avvio inoltro alert blockchain..."    
-python3 /shared/alert_forwarder.py /var/log/snort/alert_fast.txt $MEMBER_IP suricata &
+python3 /shared/alert_forwarder.py /var/log/snort/alert_fast.txt $MEMBER_IP snort &
 
 echo "Avvio server di feedback..."
 cp /shared/ids_feedback_server.py /tmp/ids_feedback_server.py

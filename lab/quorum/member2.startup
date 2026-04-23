@@ -37,7 +37,7 @@ echo "Starting geth with account: $ADDRESS" | tee -a /var/log/geth.log
 # Lancia geth, un impiccio di configurazioni per ignorare le funzionalita' strettamente "economiche"
 # La rete e' statica e permissioned quindi gia' conosciamo i nodi da contattare, e' inutile fare discovery
 # intasa solo la rete durante l'avvio che e' gia' pesante di per se.
-geth --datadir data \
+geth --datadir data --txpool.globalslots 250000 --txpool.globalqueue 50000 --txpool.accountslots 50000 --txpool.accountqueue 20000 \
     --nodiscover \
     --verbosity 2 \
     --syncmode full \
