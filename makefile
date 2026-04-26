@@ -68,9 +68,10 @@ clean-config:
 	@echo "Cleaning generated configs in $(BASE_DIR)..."
 	kathara lclean -d $(BASE_DIR) 2>/dev/null || true
 ifeq ($(LAB_TYPE),cometbft)
-	cd $(BASE_DIR) && rm -rf validator*/data light*/data fullnode*/data
+	cd $(BASE_DIR) && rm -rf shared/validator* shared/light* shared/fullnode*
+	cd $(BASE_DIR) && rm -rf shared/handshake
 	cd $(BASE_DIR) && rm -f shared/chain_ready shared/sps-node
-	cd $(BASE_DIR) && rm -rf shared/sps-chain/target shared/sps-bench/target && rm -rf target/
+	cd $(BASE_DIR) && rm -rf shared/sps-chain/target shared/sps-bench/target shared/__pycache__ && rm -rf target/
 	rm -rf benchmark/native/target
 else
 	cd $(BASE_DIR) && rm -rf validator0/data validator1/data validator2/data
