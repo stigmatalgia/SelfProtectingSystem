@@ -7,6 +7,9 @@ pub struct NodeConfig {
     #[serde(default)]
     pub consensus: ConsensusSection,
     pub ledger: LedgerSection,
+    #[serde(default)]
+    pub comet: CometSection,
+    #[serde(default)]
     pub peers: PeersSection,
     #[serde(default)]
     pub actuator: ActuatorSection,
@@ -17,8 +20,15 @@ pub struct NodeSection {
     pub id: String,
     /// "validator" | "agent" | "fullnode"
     pub role: String,
+    #[serde(default)]
     pub listen_addr: String,
     pub api_addr: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CometSection {
+    #[serde(default = "default_comet_rpc_url")]
+    pub rpc_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -52,6 +62,9 @@ pub struct ActuatorSection {
 
 fn default_200() -> u64 { 200 }
 fn default_10000() -> usize { 10000 }
+fn default_comet_rpc_url() -> String {
+    std::env::var("COMET_RPC_URL").unwrap_or_else(|_| "http://10.99.0.1:26657".to_string())
+}
 
 impl Default for ConsensusSection {
     fn default() -> Self {
@@ -59,6 +72,14 @@ impl Default for ConsensusSection {
             timeout_propose_ms: 200,
             timeout_commit_ms: 200,
             block_max_txs: 1000000,
+        }
+    }
+}
+
+impl Default for CometSection {
+    fn default() -> Self {
+        Self {
+            rpc_url: default_comet_rpc_url(),
         }
     }
 }

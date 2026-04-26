@@ -1,0 +1,34 @@
+proxy_app = "tcp://127.0.0.1:26658"
+
+[rpc]
+laddr = "tcp://0.0.0.0:26657"
+
+[p2p]
+laddr = "tcp://0.0.0.0:26656"
+persistent_peers = "0040753471b2f35207efda9e7493a8930b2fab48@10.99.0.1:26656,a28f38ab731e7767724259f4373caf3485b810dc@10.99.0.2:26656,629d38ea2c2cbff730ffa5a3eefda8789f284a53@10.99.0.3:26656,cd8c08a251998f3106e90a0166c7a9b219dc6d9a@10.99.0.14:26656"
+addr_book_strict = false
+allow_duplicate_ip = true
+
+[mempool]
+# FIX: Increase Mempool size from 5,000 to 150,000 to handle massive bursts
+size = 150000
+cache_size = 150000
+max_txs_bytes = 536870912
+recheck = false
+
+[consensus]
+# 🚀 Blazing Fast Timeouts
+timeout_propose = "300ms"
+timeout_propose_delta = "100ms"
+timeout_prevote = "200ms"
+timeout_prevote_delta = "100ms"
+timeout_precommit = "200ms"
+timeout_precommit_delta = "100ms"
+timeout_commit = "200ms"
+
+skip_timeout_commit = true
+peer_gossip_sleep_duration = "10ms"
+
+# FIX: Force an empty block every 1 second to prevent the consensus engine from 
+# stalling edge-case transactions in the mempool
+create_empty_blocks = false

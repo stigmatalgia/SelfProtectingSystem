@@ -6,13 +6,29 @@ export LANG=C.UTF-8
 ip addr add 10.99.0.3/24 dev eth0
 sysctl -w net.ipv4.ip_forward=1
 
-DATA_DIR=/data
-mkdir -p /home/cometbft/data
-cp -r "$DATA_DIR"/config.toml /home/cometbft/data/config.toml
+# ── Setup directories ───────────────────────────────────────────────────────
+mkdir -p /root/.cometbft/config /root/.cometbft/data
+chmod +x /shared/handshake.sh
 
-echo "Starting sps-node (validator2)..." >> /var/log/sps-node.log
-sps-node --config /home/cometbft/data/config.toml >> /var/log/sps-node.log 2>&1 &
+# Initial configs from generate_cometbft_config.py
+cp /shared/validator2/config.toml /root/.cometbft/config/config.toml
+cp /shared/validator2/sps_config.toml /root/sps_config.toml
+cp /shared/validator2/genesis.json /root/.cometbft/config/genesis.json
+cp /shared/validator2/priv_validator_key.json /root/.cometbft/config/priv_validator_key.json
+cp /shared/validator2/node_key.json /root/.cometbft/config/node_key.json
+cp /shared/validator2/priv_validator_state.json /root/.cometbft/data/priv_validator_state.json
+
+# Wait for validator0 to be ready
+while [ ! -f /shared/handshake/validator0 ]; do sleep 1; done
+
+# ── Start sps-node (ABCI Server + HTTP API) ─────────────────────────────────
+echo "Starting sps-node ABCI app..." >> /var/log/sps-node.log
+sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
+
+# ── Start CometBFT Node ─────────────────────────────────────────────────────
+echo "Starting CometBFT consensus engine..." >> /var/log/cometbft.log
+cometbft node --home /root/.cometbft >> /var/log/cometbft.log 2>&1 &
 
 echo "Waiting for sps-node API..."
 for i in $(seq 1 30); do

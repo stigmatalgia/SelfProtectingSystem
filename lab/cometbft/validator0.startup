@@ -10,22 +10,36 @@ set -x
 ip addr add 10.99.0.1/24 dev eth0
 sysctl -w net.ipv4.ip_forward=1
 
-DATA_DIR=/data
-mkdir -p /home/cometbft/data
-cp -r "$DATA_DIR"/config.toml /home/cometbft/data/config.toml
+# ── Setup directories ───────────────────────────────────────────────────────
+mkdir -p /root/.cometbft/config /root/.cometbft/data
+chmod +x /shared/handshake.sh
 
-# ── Start sps-node ──────────────────────────────────────────────────────────
-echo "Starting sps-node (validator0)..." >> /var/log/sps-node.log
-sps-node --config /home/cometbft/data/config.toml >> /var/log/sps-node.log 2>&1 &
+# Initial configs from generate_cometbft_config.py
+cp /shared/validator0/config.toml /root/.cometbft/config/config.toml
+cp /shared/validator0/sps_config.toml /root/sps_config.toml
+cp /shared/validator0/genesis.json /root/.cometbft/config/genesis.json
+cp /shared/validator0/priv_validator_key.json /root/.cometbft/config/priv_validator_key.json
+cp /shared/validator0/node_key.json /root/.cometbft/config/node_key.json
+cp /shared/validator0/priv_validator_state.json /root/.cometbft/data/priv_validator_state.json
+
+# Signal readiness for nodes waiting for genesis
+mkdir -p /shared/handshake
+cp /root/.cometbft/config/genesis.json /shared/handshake/validator0_genesis.json
+touch /shared/handshake/validator0
+
+# ── Start sps-node (ABCI Server + HTTP API) ─────────────────────────────────
+echo "Starting sps-node ABCI app..." >> /var/log/sps-node.log
+sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
-# ── Wait for API to become ready ────────────────────────────────────────────
+# ── Start CometBFT Node ─────────────────────────────────────────────────────
+echo "Starting CometBFT consensus engine..." >> /var/log/cometbft.log
+cometbft node --home /root/.cometbft >> /var/log/cometbft.log 2>&1 &
+
 echo "Waiting for sps-node API..."
-API_READY=false
 for i in $(seq 1 30); do
     if curl -sf http://localhost:3000/alive > /dev/null 2>&1; then
         echo "sps-node API ready after ${i}s"
-        API_READY=true
         break
     fi
     if ! kill -0 "$SPS_PID" 2>/dev/null; then
@@ -36,15 +50,4 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-if [ "$API_READY" != "true" ]; then
-    echo "ERROR: sps-node API did not become ready within 30s"
-    tail -n 30 /var/log/sps-node.log
-    exit 0
-fi
-
-# ── Trigger action-map population (built-in to sps-node, this is a no-op) ──
-curl -sf -X POST http://localhost:3000/admin/populate_map >> /var/log/sps-node.log 2>&1
-
-# ── Signal readiness to other nodes ────────────────────────────────────────
-touch /shared/chain_ready
 echo "validator0 startup complete"

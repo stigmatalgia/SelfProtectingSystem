@@ -19,6 +19,8 @@ log = "0.4"
 env_logger = "0.11"
 rand = "0.8"
 bytes = "1"
+abci = { package = "abci-rs", version = "0.11.3" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [profile.release]
 opt-level = 3

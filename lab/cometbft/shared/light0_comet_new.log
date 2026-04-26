@@ -1,0 +1,93 @@
+Starting CometBFT (agent)...
+I[2026-04-24|04:20:14.140] service start                                module=proxy msg="Starting multiAppConn service" impl=multiAppConn
+I[2026-04-24|04:20:14.140] service start                                module=abci-client connection=query msg="Starting socketClient service" impl=socketClient
+I[2026-04-24|04:20:14.145] service start                                module=abci-client connection=snapshot msg="Starting socketClient service" impl=socketClient
+I[2026-04-24|04:20:14.148] service start                                module=abci-client connection=mempool msg="Starting socketClient service" impl=socketClient
+I[2026-04-24|04:20:14.148] service start                                module=abci-client connection=consensus msg="Starting socketClient service" impl=socketClient
+I[2026-04-24|04:20:14.148] service start                                module=events msg="Starting EventBus service" impl=EventBus
+I[2026-04-24|04:20:14.148] service start                                module=pubsub msg="Starting PubSub service" impl=PubSub
+I[2026-04-24|04:20:14.179] service start                                module=txindex msg="Starting IndexerService service" impl=IndexerService
+I[2026-04-24|04:20:14.182] ABCI Handshake App Info                      module=consensus height=0 hash= software-version=0.1 protocol-version=1
+I[2026-04-24|04:20:14.182] ABCI Replay Blocks                           module=consensus appHeight=0 storeHeight=0 stateHeight=0
+I[2026-04-24|04:20:14.187] Completed ABCI Handshake - CometBFT and App are synced module=consensus appHeight=0 appHash=
+I[2026-04-24|04:20:14.187] Version info                                 module=main cmtbft_version=0.34.29 abci=0.17.0 block=11 p2p=8 commit_hash=
+I[2026-04-24|04:20:14.187] This node is not a validator                 module=consensus addr=E021D7EF8B96B3478BEE2009B28E0743AA71D2A5 pubKey=PubKeyEd25519{403682AC6ABAA5BCF166F8FE9F79988482EF377D244AD14864E1D5F635BBDCC2}
+I[2026-04-24|04:20:14.213] P2P Node ID                                  module=p2p ID=9882d78a30638adc794da6032901a6d55d6e8aca file=/root/.cometbft/config/node_key.json
+I[2026-04-24|04:20:14.213] Adding persistent peers                      module=p2p addrs="[99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656 c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656 df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656]"
+I[2026-04-24|04:20:14.213] Adding unconditional peer ids                module=p2p ids=[]
+I[2026-04-24|04:20:14.213] Add our address to book                      module=p2p book=/root/.cometbft/config/addrbook.json addr=9882d78a30638adc794da6032901a6d55d6e8aca@10.99.0.11:26656
+I[2026-04-24|04:20:14.213] Add our address to book                      module=p2p book=/root/.cometbft/config/addrbook.json addr=9882d78a30638adc794da6032901a6d55d6e8aca@0.0.0.0:26656
+I[2026-04-24|04:20:14.213] service start                                module=main msg="Starting Node service" impl=Node
+I[2026-04-24|04:20:14.214] service start                                module=p2p msg="Starting P2P Switch service" impl="P2P Switch"
+I[2026-04-24|04:20:14.214] service start                                module=blockchain msg="Starting BlockchainReactor service" impl=BlockchainReactor
+I[2026-04-24|04:20:14.214] service start                                module=blockchain msg="Starting BlockPool service" impl=BlockPool
+I[2026-04-24|04:20:14.214] service start                                module=consensus msg="Starting Consensus service" impl=ConsensusReactor
+I[2026-04-24|04:20:14.214] Reactor                                      module=consensus waitSync=true
+I[2026-04-24|04:20:14.214] service start                                module=evidence msg="Starting Evidence service" impl=Evidence
+I[2026-04-24|04:20:14.214] service start                                module=statesync msg="Starting StateSync service" impl=StateSync
+I[2026-04-24|04:20:14.214] service start                                module=pex msg="Starting PEX service" impl=PEX
+I[2026-04-24|04:20:14.214] service start                                module=p2p book=/root/.cometbft/config/addrbook.json msg="Starting AddrBook service" impl=AddrBook
+I[2026-04-24|04:20:14.215] Saving AddrBook to file                      module=p2p book=/root/.cometbft/config/addrbook.json size=3
+I[2026-04-24|04:20:14.215] Ensure peers                                 module=pex numOutPeers=0 numInPeers=0 numDialing=0 numToDial=10
+I[2026-04-24|04:20:14.216] serve                                        module=rpc-server msg="Starting RPC HTTP server on [::]:26657"
+I[2026-04-24|04:20:14.218] Started node                                 module=main nodeInfo="{ProtocolVersion:{P2P:8 Block:11 App:1} DefaultNodeID:9882d78a30638adc794da6032901a6d55d6e8aca ListenAddr:tcp://10.99.0.11:26656 Network:sps-chain-1 Version:0.34.29 Channels:40202122233038606100 Moniker:light0 Other:{TxIndex:on RPCAddress:tcp://0.0.0.0:26657}}"
+I[2026-04-24|04:20:14.226] Reconnecting to peer                         module=p2p addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:14.228] Reconnecting to peer                         module=p2p addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:14.247] Error reconnecting to peer. Trying again     module=p2p tries=0 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:14.247] Error reconnecting to peer. Trying again     module=p2p tries=0 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:14.247] Reconnecting to peer                         module=p2p addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:20:14.270] Error reconnecting to peer. Trying again     module=p2p tries=0 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+E[2026-04-24|04:20:15.146] Error dialing peer                           module=p2p err="auth failure: secret conn failed: challenge verification failed"
+E[2026-04-24|04:20:15.175] Error dialing peer                           module=p2p err="auth failure: secret conn failed: challenge verification failed"
+E[2026-04-24|04:20:16.188] Error dialing peer                           module=p2p err="auth failure: secret conn failed: challenge verification failed"
+I[2026-04-24|04:20:20.158] Error reconnecting to peer. Trying again     module=p2p tries=1 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:20:20.174] Error reconnecting to peer. Trying again     module=p2p tries=1 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:20.766] Error reconnecting to peer. Trying again     module=p2p tries=1 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:26.780] Error reconnecting to peer. Trying again     module=p2p tries=2 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:27.947] Error reconnecting to peer. Trying again     module=p2p tries=2 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:20:28.283] Error reconnecting to peer. Trying again     module=p2p tries=2 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:33.021] Error reconnecting to peer. Trying again     module=p2p tries=3 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:20:33.949] Error reconnecting to peer. Trying again     module=p2p tries=3 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:34.137] Error reconnecting to peer. Trying again     module=p2p tries=3 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:38.308] Error reconnecting to peer. Trying again     module=p2p tries=4 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:20:41.383] Error reconnecting to peer. Trying again     module=p2p tries=4 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:41.620] Error reconnecting to peer. Trying again     module=p2p tries=4 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:44.218] Ensure peers                                 module=pex numOutPeers=0 numInPeers=0 numDialing=0 numToDial=10
+I[2026-04-24|04:20:44.422] Error reconnecting to peer. Trying again     module=p2p tries=5 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:20:48.800] Error reconnecting to peer. Trying again     module=p2p tries=5 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:49.259] Error reconnecting to peer. Trying again     module=p2p tries=5 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:51.749] Error reconnecting to peer. Trying again     module=p2p tries=6 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:20:54.311] Error reconnecting to peer. Trying again     module=p2p tries=6 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:20:55.863] Error reconnecting to peer. Trying again     module=p2p tries=6 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:20:58.424] Error reconnecting to peer. Trying again     module=p2p tries=7 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:01.983] Error reconnecting to peer. Trying again     module=p2p tries=7 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:02.309] Error reconnecting to peer. Trying again     module=p2p tries=7 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:04.812] Error reconnecting to peer. Trying again     module=p2p tries=8 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:07.591] Error reconnecting to peer. Trying again     module=p2p tries=8 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:08.157] Error reconnecting to peer. Trying again     module=p2p tries=8 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:11.963] Error reconnecting to peer. Trying again     module=p2p tries=9 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:14.219] Ensure peers                                 module=pex numOutPeers=0 numInPeers=0 numDialing=0 numToDial=10
+I[2026-04-24|04:21:15.020] Error reconnecting to peer. Trying again     module=p2p tries=9 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:15.495] Error reconnecting to peer. Trying again     module=p2p tries=9 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:19.574] Error reconnecting to peer. Trying again     module=p2p tries=10 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:21.367] Error reconnecting to peer. Trying again     module=p2p tries=10 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:22.951] Error reconnecting to peer. Trying again     module=p2p tries=10 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:27.475] Error reconnecting to peer. Trying again     module=p2p tries=11 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:28.823] Error reconnecting to peer. Trying again     module=p2p tries=11 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:29.669] Error reconnecting to peer. Trying again     module=p2p tries=11 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:34.153] Error reconnecting to peer. Trying again     module=p2p tries=12 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:34.395] Error reconnecting to peer. Trying again     module=p2p tries=12 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:37.474] Error reconnecting to peer. Trying again     module=p2p tries=12 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:39.427] Error reconnecting to peer. Trying again     module=p2p tries=13 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:40.456] Error reconnecting to peer. Trying again     module=p2p tries=13 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:44.219] Ensure peers                                 module=pex numOutPeers=0 numInPeers=0 numDialing=0 numToDial=10
+I[2026-04-24|04:21:44.844] Error reconnecting to peer. Trying again     module=p2p tries=13 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:47.425] Error reconnecting to peer. Trying again     module=p2p tries=14 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:47.492] Error reconnecting to peer. Trying again     module=p2p tries=14 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:51.671] Error reconnecting to peer. Trying again     module=p2p tries=14 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:21:53.415] Error reconnecting to peer. Trying again     module=p2p tries=15 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:54.079] Error reconnecting to peer. Trying again     module=p2p tries=15 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:21:58.983] Error reconnecting to peer. Trying again     module=p2p tries=16 err="auth failure: secret conn failed: challenge verification failed" addr=df295f6851a30663dc9316fece14bdf7c345164c@10.99.0.3:26656
+I[2026-04-24|04:21:59.017] Error reconnecting to peer. Trying again     module=p2p tries=15 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656
+I[2026-04-24|04:22:00.438] Error reconnecting to peer. Trying again     module=p2p tries=16 err="auth failure: secret conn failed: challenge verification failed" addr=c62fa7d5f6fe8ec1b8e64d55f19eaf3e561d7f3b@10.99.0.2:26656
+I[2026-04-24|04:22:04.679] Error reconnecting to peer. Trying again     module=p2p tries=16 err="auth failure: secret conn failed: challenge verification failed" addr=99501ea051d6ed26ac146d98838976259f106d93@10.99.0.1:26656

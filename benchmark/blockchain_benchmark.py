@@ -1,4 +1,3 @@
-
 import argparse
 import subprocess
 import time
@@ -291,9 +290,9 @@ def get_node_tx_count(lab_dir: str, node: str, lab_type: str) -> int:
 def wait_for_tx_quiescence(
     lab_dir: str,
     lab_type: str,
-    max_wait_s: int = 5,
+    max_wait_s: int = 120,
     poll_s: float = 1.0,
-    stable_ticks: int = 5,
+    stable_ticks: int = 15,
 ) -> int:
     """
     Wait until cluster tx_count stops moving for a short period.
@@ -365,16 +364,15 @@ def run_cometbft_bench(
     Execute sps-bench inside the light0 container.
     Returns parsed BENCH_STATS dict or None on failure.
     """
-    # Priority 1: system path, Priority 2: /shared/sps-bench
+    # Updated to inject via HTTP (COMET_API_TARGET) and removed --queue-depth from CLI
     cmd_str = (
         f"sps-bench --n {n} "
-        f"--target {COMET_P2P_TARGET} "
+        f"--target {COMET_API_TARGET} "
         f"--api {COMET_API_TARGET} "
         f"--concurrency {concurrency} "
-        f"--queue-depth {queue_depth} "
         f"--step {step} "
-        f"|| /shared/sps-bench --n {n} --target {COMET_P2P_TARGET} --api {COMET_API_TARGET} "
-        f"--concurrency {concurrency} --queue-depth {queue_depth} --step {step}"
+        f"|| /shared/sps-bench --n {n} --target {COMET_API_TARGET} --api {COMET_API_TARGET} "
+        f"--concurrency {concurrency} --step {step}"
     )
     inner = f"bash -c '{cmd_str}'"
     print(f"  Executing: {inner}")

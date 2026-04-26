@@ -71,17 +71,21 @@ def forwarder_worker(worker_id):
                 headers = {'Content-Type': 'application/json', 'Connection': 'keep-alive'}
                 conn.request("POST", "/alert", body=data, headers=headers)
                 response = conn.getresponse()
-                response.read() # Leggiamo la risposta per liberare il socket
+                resp_data = response.read() # Leggiamo la risposta per liberare il socket
                 
                 if response.status in [200, 202, 201]:
                     success = True
+                    sys.stdout.write(f"[SEND] Successfully forwarded {len(batch)} alerts to {VALIDATOR_IP}\n")
                 else:
+                    sys.stdout.write(f"[ERROR] Failed to forward alerts: {response.status} - {resp_data.decode()}\n")
                     retries -= 1
-            except Exception:
+            except Exception as e:
+                sys.stdout.write(f"[ERROR] Connection error to {VALIDATOR_IP}: {e}\n")
                 # Se l'API chiude la connessione, ci riconnettiamo
                 connect()
                 retries -= 1
                 time.sleep(0.1)
+        sys.stdout.flush()
                 
         for _ in batch:
             alert_queue.task_done()
@@ -90,6 +94,7 @@ def follow(file_path):
     while True:
         line = file_path.readline()
         if not line:
+            time.sleep(0.1)
             continue
         yield line
 
@@ -100,39 +105,47 @@ def main():
     while not os.path.exists(LOG_FILE):
         time.sleep(1)
 
-    # Avviamo 10 worker (sufficienti visto che ora inviamo in batch da 100)
+    # Avviamo 10 worker
     for i in range(10):
         t = threading.Thread(target=forwarder_worker, args=(i,), daemon=True)
         t.start()
 
     with open(LOG_FILE, "r") as f:
-        f.seek(0, os.SEEK_END)
+        # NON facciamo f.seek(0, os.SEEK_END) per non perdere alert iniziali
         for line in follow(f):
             line_lower = line.lower()
             
-            # Recupero (Negative alert)
-            if "negative alert: " in line_lower:
-                if os.path.exists(DISABLE_NEGATIVE_MARKER):
-                    continue
-                try:
-                    alert_type = line.split("NEGATIVE ALERT: ")[1].strip()
-                    payload = {
-                        "ids": IDS_NAME, "message": "Recovery", 
-                        "type": alert_type, "value": 0, "timestamp": datetime.now().isoformat()
-                    }
-                    alert_queue.put(payload)
-                except: pass
-                continue
-
             # Attacchi
+            found = False
             for alert_type in ALERTS:
-                if alert_type.lower() in line_lower or alert_type.replace("_", " ").lower() in line_lower:
+                line_lower = line.lower()
+                patterns = [
+                    alert_type.lower(),                                 # sql_injection
+                    alert_type.replace("_", " ").lower(),              # sql injection
+                    alert_type.replace("_", "-").lower(),              # sql-injection
+                ]
+                
+                if any(p in line_lower for p in patterns):
                     payload = {
                         "ids": IDS_NAME, "message": line.strip(), 
                         "type": alert_type, "value": 1, "timestamp": datetime.now().isoformat()
                     }
                     alert_queue.put(payload)
+                    sys.stdout.write(f"[MATCH] Found {alert_type} in {IDS_NAME} logs\n")
+                    sys.stdout.flush()
+                    found = True
                     break
+            
+            if not found and "negative alert" in line_lower:
+                 # Trattiamo i negative alert separatamente
+                 for alert_type in ALERTS:
+                     if alert_type.lower() in line_lower:
+                         payload = {
+                            "ids": IDS_NAME, "message": "Recovery", 
+                            "type": alert_type, "value": 0, "timestamp": datetime.now().isoformat()
+                         }
+                         alert_queue.put(payload)
+                         break
 
 if __name__ == "__main__":
     main()

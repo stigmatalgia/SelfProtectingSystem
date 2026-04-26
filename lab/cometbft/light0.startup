@@ -1,22 +1,27 @@
 #!/bin/bash
-# light0 — IDS agent node (receives alerts from ids_snort, votes on blockchain).
-# Connected to: mgmt1 (eth0, 172.16.1.10) + blockchain (eth1, 10.99.0.11)
+# light0 — Blockchain agent node.
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
-export PYTHONIOENCODING=utf-8
 
 ip addr add 172.16.1.10/24 dev eth0
 ip addr add 10.99.0.11/24 dev eth1
 sysctl -w net.ipv4.ip_forward=1
 
-DATA_DIR=/data
-mkdir -p /home/cometbft/data
-cp -r "$DATA_DIR"/config.toml /home/cometbft/data/config.toml
+# ── Setup directories ───────────────────────────────────────────────────────
+mkdir -p /root/.cometbft/config
+cp /shared/light0/genesis.json /root/.cometbft/config/genesis.json
+cp /shared/light0/node_key.json /root/.cometbft/config/node_key.json
+cp /shared/light0/config.toml /root/.cometbft/config/config.toml
+cp /shared/light0/sps_config.toml /root/sps_config.toml
 
 # ── Start sps-node ──────────────────────────────────────────────────────────
-echo "Starting sps-node (light0/agent)..." >> /var/log/sps-node.log
-sps-node --config /home/cometbft/data/config.toml >> /var/log/sps-node.log 2>&1 &
+echo "Starting sps-node (light0)..." >> /var/log/sps-node.log
+sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
+
+# ── Start CometBFT Node ─────────────────────────────────────────────────────
+echo "Starting CometBFT (agent)..." >> /var/log/cometbft.log
+cometbft node --home /root/.cometbft >> /var/log/cometbft.log 2>&1 &
 
 echo "Waiting for sps-node API..."
 for i in $(seq 1 30); do
@@ -31,20 +36,5 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
-
-# ── Wait for chain to be ready (validator0 signals this) ───────────────────
-echo "Waiting for chain_ready signal from validator0..."
-for i in $(seq 1 60); do
-    [ -f /shared/chain_ready ] && break
-    sleep 1
-done
-
-echo "Starting alert forwarder (IDS → blockchain API)..."
-# alert_forwarder.py: unchanged — reads IDS logs and POSTs to /alert on this node
-python3 /shared/alert_forwarder.py \
-    /var/log/snort/alert_fast.txt \
-    127.0.0.1 \
-    snort \
-    >> /var/log/alert_forwarder.log 2>&1 &
 
 echo "light0 startup complete"

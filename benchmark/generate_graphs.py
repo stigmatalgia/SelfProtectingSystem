@@ -3,14 +3,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
+print("Starting graph generation...")
 os.makedirs('result', exist_ok=True)
 
+print("Setting style...")
 plt.style.use('seaborn-v0_8-whitegrid')
 
 # ---------------------------------------------------------
 # GRAPH 1: Capacity Results CometBFT
 # ---------------------------------------------------------
 try:
+    print("Generating Graph 1...")
     with open('result/cometbft/capacity_results.json', 'r') as f:
         data_capacity = json.load(f)
 
@@ -50,6 +53,7 @@ except Exception as e:
 # GRAPHS 2 & 3: Comparison CometBFT vs Quorum
 # ---------------------------------------------------------
 try:
+    print("Generating Graph 2/3...")
     with open('result/cometbft/blockchain_capacity.json', 'r') as f:
         cbft_data = json.load(f)
 
@@ -74,8 +78,8 @@ try:
     # ---------------------------------------------------------
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    ax.plot(c_sent, c_lat_plot, marker='o', linestyle='-', linewidth=3.5, markersize=8, color='#C44E52', alpha=0.85, label='CometBFT Latency', zorder=3)
-    ax.plot(q_sent, q_lat_plot, marker='o', linestyle='-', linewidth=2.5, markersize=8, color='#4C72B0', alpha=0.85, label='Quorum Latency', zorder=4)
+    ax.plot(c_sent, c_lat_plot, marker='o', linestyle='-', linewidth=3.5, markersize=8, color='#4C72B0', alpha=0.85, label='CometBFT Latency', zorder=3)
+    ax.plot(q_sent, q_lat_plot, marker='o', linestyle='-', linewidth=2.5, markersize=8, color='#C44E52', alpha=0.85, label='Quorum Latency', zorder=4)
 
     for i in range(len(c_sent)):
         is_c_above = c_lat_plot[i] >= q_lat_plot[i]
@@ -117,10 +121,10 @@ try:
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(c_sent, c_sent, marker='', linestyle='--', linewidth=2, color='#8C8C8C', label='Ideal (Trans = Sent)', zorder=1)
     
-    ax.plot(c_sent, c_trans_plot, marker='o', linestyle='-', linewidth=4.5, markersize=8, color='#C44E52', alpha=0.85, label='CometBFT Trans', zorder=3)
-    ax.plot(q_sent, q_trans_plot, marker='o', linestyle='-', linewidth=2, markersize=6, color='#4C72B0', alpha=0.85, label='Quorum Trans', zorder=4)
+    ax.plot(c_sent, c_trans_plot, marker='o', linestyle='-', linewidth=4.5, markersize=8, color='#4C72B0', alpha=0.85, label='CometBFT Trans', zorder=3)
+    ax.plot(q_sent, q_trans_plot, marker='o', linestyle='-', linewidth=2, markersize=6, color='#C44E52', alpha=0.85, label='Quorum Trans', zorder=4)
 
-    for i in range(len(c_sent) - 2):
+    for i in range(len(c_sent)):
         is_c_above = c_trans_plot[i] >= q_trans_plot[i]
         c_offset = (0, 10) if is_c_above else (0, -12)
         c_va = 'bottom' if is_c_above else 'top'
@@ -130,15 +134,15 @@ try:
                     textcoords="offset points", xytext=c_offset, ha='center', va=c_va, 
                     fontsize=12, fontweight='bold', color='#4C72B0')
         
-    for i in range(len(q_sent) - 2):
+    for i in range(len(q_sent)):
         is_c_above = c_trans_plot[i] >= q_trans_plot[i]
         q_offset = (0, -12) if is_c_above else (0, 10)
         q_va = 'top' if is_c_above else 'bottom'
-
+        if i != len(q_sent) - 2:
         # Annotazioni
-        ax.annotate(f"{q_tps[i]:.0f} TPS", (q_sent[i], q_trans_plot[i]), 
-                    textcoords="offset points", xytext=q_offset, ha='center', va=q_va, 
-                    fontsize=12, fontweight='bold', color='#C44E52')
+            ax.annotate(f"{q_tps[i]:.0f} TPS", (q_sent[i], q_trans_plot[i]), 
+                        textcoords="offset points", xytext=q_offset, ha='center', va=q_va, 
+                        fontsize=12, fontweight='bold', color='#C44E52')
 
     ax.set_xscale('log')
     ax.set_yscale('log')
@@ -159,6 +163,7 @@ except Exception as e:
 # GRAPH 4: Boxplot Response Time
 # ---------------------------------------------------------
 try:
+    print("Generating Graph 4...")
     import glob
 
     def find_latest_data(lab_type):
