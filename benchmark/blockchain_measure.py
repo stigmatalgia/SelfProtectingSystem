@@ -46,7 +46,7 @@ def main():
             "curl -s --connect-timeout 2 --max-time 2 -X POST -H 'Content-Type: application/json' "
             "-d '[{\"type\": \"SAFE_ENVIRONMENT\", \"value\": 1}]' http://localhost:3000/alert"
         )
-        run_shell(cmd_reset, timeout_s=5, label=f"SAFE_ENVIRONMENT reset {node}")
+        run_shell(cmd_reset, timeout_s=5, label=f"")
     
     time.sleep(2)
 

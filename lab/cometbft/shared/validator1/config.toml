@@ -5,7 +5,7 @@ laddr = "tcp://0.0.0.0:26657"
 
 [p2p]
 laddr = "tcp://0.0.0.0:26656"
-persistent_peers = "0040753471b2f35207efda9e7493a8930b2fab48@10.99.0.1:26656,629d38ea2c2cbff730ffa5a3eefda8789f284a53@10.99.0.3:26656"
+persistent_peers = "1adb253215de417421cdafe72fc9366fd1b785bb@10.99.0.1:26656,78676e44210d15c60de60eb578f2a0447a2d5963@10.99.0.3:26656"
 addr_book_strict = false
 allow_duplicate_ip = true
 
@@ -17,7 +17,6 @@ max_txs_bytes = 536870912
 recheck = false
 
 [consensus]
-# 🚀 Blazing Fast Timeouts
 timeout_propose = "300ms"
 timeout_propose_delta = "100ms"
 timeout_prevote = "200ms"

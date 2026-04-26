@@ -90,7 +90,7 @@ measure:
 
 chart:
 	@echo "Generating chart for $(LAB_TYPE) (N=$(N) attacks)..."
-	cd benchmark && $(ENV_VARS) ../.venv/bin/python generate_chart.py ../$(BASE_DIR) $(N)
+	cd benchmark && $(ENV_VARS) ../.venv/bin/python blockchain_measure.py ../$(BASE_DIR) $(N)
 
 capacity:
 	@echo "Running capacity benchmark for $(LAB_TYPE)..."
@@ -141,7 +141,7 @@ all-benchmarks:
 	$(MAKE) cometbft blockchain-benchmark
 	$(MAKE) cometbft clean-config
 	@echo "=== Generating Final Charts ==="
-	cd benchmark && $(ENV_VARS) ../.venv/bin/python generate_graphs.py
+	cd benchmark && $(ENV_VARS) ../.venv/bin/python blockchain_measures.py
 	@echo "All benchmarks completed and charts generated in benchmark/result!"
 
 # ── Help ───────────────────────────────────────────────────────────────────

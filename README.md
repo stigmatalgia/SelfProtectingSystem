@@ -96,7 +96,7 @@ While the overall defensive system architecture remains identical, the underlyin
 The repository includes a little benchmarking suite designed to measure the system's end-to-end response delay—calculated as the exact delta between the moment an IDS detects an intrusion and the instant the Actuator executes the mitigation script.
 
 *   **`measure_response_time.py`**: Parses the logs of Snort, Suricata, Zeek, and the Actuator to determine the first synchronized detection and its corresponding mitigation, returning the isolated delta in seconds.
-*   **`generate_chart.py`**: Automates multiple sequential attack simulations (default `N=10`), records the response time for each iteration, and generates a Boxplot chart to visually evaluate the system's performance and cyber-resilience under stress.
+*   **`blockchain_measure.py`**: Automates multiple sequential attack simulations (default `N=10`), records the response time for each iteration, and generates a Boxplot chart to visually evaluate the system's performance and cyber-resilience under stress.
 
 Results are saved as JSON data and PNG charts within the `benchmark/result/<lab_type>/` directory.
 

@@ -18,7 +18,6 @@ try:
     from cryptography.hazmat.primitives.asymmetric import ed25519
     from cryptography.hazmat.primitives import serialization
 except ImportError:
-    print("❌ Error: Please install cryptography -> pip install cryptography")
     exit(1)
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
@@ -131,7 +130,6 @@ max_txs_bytes = 536870912
 recheck = false
 
 [consensus]
-# 🚀 Blazing Fast Timeouts
 timeout_propose = "300ms"
 timeout_propose_delta = "100ms"
 timeout_prevote = "200ms"

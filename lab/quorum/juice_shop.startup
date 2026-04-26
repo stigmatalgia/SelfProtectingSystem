@@ -1,26 +1,38 @@
-# Il servizio da difendere, il motivo d'essere dell'architettura
+#!/bin/bash
+
+# -- Configurazione Ambiente --
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export PYTHONIOENCODING=utf-8
-# fa uso dell'OWASP Juice shop, servizio pensato per il pentesting
-# volutamente vulnerabile a qualsivoglia attacco
+export NODE_ENV=test
+export NODE_TLS_REJECT_UNAUTHORIZED=0
+
+# -- Rete --
 ip addr add 10.0.0.80/24 dev eth0
 ip route add default via 10.0.0.254
 
+# -- Setup Directory --
+cd /juice-shop
+rm -f data/juiceshop.sqlite
+rm -rf config/production.yml
+mkdir -p data
+chmod -R 777 data
+
+# -- Configurazione SSH --
 mkdir -p /var/run/sshd
 mkdir -p /root/.ssh
 chmod 700 /root/.ssh
 
-cp /shared/ssh/actuator_id_ed25519.pub /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
+if [ -f /shared/ssh/actuator_id_ed25519.pub ]; then
+    cp /shared/ssh/actuator_id_ed25519.pub /root/.ssh/authorized_keys
+    chmod 600 /root/.ssh/authorized_keys
+fi
 
-# Configurazione della connessione ssh come in actuator
 [ ! -f /etc/ssh/ssh_host_ed25519_key ] && ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N ""
-[ ! -f /etc/ssh/ssh_host_rsa_key ]     && ssh-keygen -t rsa -b 2048 -f /etc/ssh/ssh_host_rsa_key -N ""
+[ ! -f /etc/ssh/ssh_host_rsa_key ] && ssh-keygen -t rsa -b 2048 -f /etc/ssh/ssh_host_rsa_key -N ""
 
-/usr/sbin/sshd &
+/usr/sbin/sshd
 
-# Start the Juice Shop service
-cd /juice-shop && npm start
-
-echo "juice_shop service and SSH server ready"
+# -- Avvio --
+echo "Avvio Juice Shop (Default Config)..."
+nohup npm start > /var/log/juice-shop.log 2>&1 &
