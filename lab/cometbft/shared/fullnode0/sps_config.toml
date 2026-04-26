@@ -1,7 +1,7 @@
 # sps-node configuration
 
 [node]
-id       = "2b32c1d983ea37af54db4a6070a7e9e5276fc01c"
+id       = "199eebbf4a6ac670711c2a92b262f5833b05d7b1"
 role     = "fullnode"
 listen_addr = "0.0.0.0:26656"
 api_addr    = "0.0.0.0:3000"
@@ -16,7 +16,7 @@ parameters   = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECT
 agents_count = 3
 
 [peers]
-persistent = ["1adb253215de417421cdafe72fc9366fd1b785bb@10.99.0.1:26656", "689d20ac00ccf99ceba5d7502f7e33d4ae1d78ad@10.99.0.2:26656", "78676e44210d15c60de60eb578f2a0447a2d5963@10.99.0.3:26656", "2b32c1d983ea37af54db4a6070a7e9e5276fc01c@10.99.0.14:26656"]
+persistent = ["0456dac6c4eac5eb5fd1f19e2606d1ceb9c20e84@10.99.0.1:26656", "9ce1b269a9373d3d2833f08b9bac0d76a816e566@10.99.0.2:26656", "b9d9c5e6d09097fdc6af1024d88b2d779bcaf2d5@10.99.0.3:26656", "199eebbf4a6ac670711c2a92b262f5833b05d7b1@10.99.0.14:26656"]
 
 [actuator]
 url = "http://172.16.4.1:5000/action"

@@ -5,7 +5,7 @@ laddr = "tcp://0.0.0.0:26657"
 
 [p2p]
 laddr = "tcp://0.0.0.0:26656"
-persistent_peers = "689d20ac00ccf99ceba5d7502f7e33d4ae1d78ad@10.99.0.2:26656,78676e44210d15c60de60eb578f2a0447a2d5963@10.99.0.3:26656"
+persistent_peers = "9ce1b269a9373d3d2833f08b9bac0d76a816e566@10.99.0.2:26656,b9d9c5e6d09097fdc6af1024d88b2d779bcaf2d5@10.99.0.3:26656"
 addr_book_strict = false
 allow_duplicate_ip = true
 

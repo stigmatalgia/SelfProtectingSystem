@@ -46,6 +46,7 @@ pub mod stats {
 pub fn make_router(state: ApiState) -> Router {
     Router::new()
         .route("/alert", post(handle_alert))
+        .route("/stress", post(handle_stress))
         .route("/votes", get(handle_votes))
         .route("/state", get(handle_state))
         .route("/stats", get(handle_stats))
@@ -70,11 +71,29 @@ async fn handle_alert(
     let agent_id = alerts[0].ids.clone();
     log::info!("[API] Received batch of {} alerts from agent {}", alerts.len(), agent_id);
 
+    {
+        let mut stats = s.local_stats.write().unwrap();
+        stats.received += alerts.len() as u64;
+    }
+
     let mut param_map: HashMap<String, u64> = HashMap::new();
+    let mut is_safe_env = false;
+
     for alert in alerts {
         let alert_type = alert.r#type.to_uppercase();
-        if VALID_ALERTS.contains(&alert_type.as_str()) {
+        if alert_type == "SAFE_ENVIRONMENT" {
+            is_safe_env = true;
+        } else if VALID_ALERTS.contains(&alert_type.as_str()) {
             *param_map.entry(alert_type).or_insert(0) += alert.value;
+        }
+    }
+
+    // SAFE_ENVIRONMENT forces all attack parameters to 0
+    if is_safe_env {
+        for &p in VALID_ALERTS {
+            if p != "SAFE_ENVIRONMENT" {
+                param_map.insert(p.to_string(), 0);
+            }
         }
     }
 
@@ -104,6 +123,8 @@ async fn handle_alert(
 
     match s.tx_queue.send(vote).await {
         Ok(_) => {
+            let mut stats = s.local_stats.write().unwrap();
+            stats.processed += 1; // We count batches/transactions as processed units
             StatusCode::ACCEPTED
         },
         Err(e) => {
@@ -112,6 +133,36 @@ async fn handle_alert(
         }
     }
 }
+
+async fn handle_stress(
+    State(s): State<ApiState>,
+    Json(alert): Json<IncomingAlert>,
+) -> impl IntoResponse {
+    let mut parameters = Vec::new();
+    let mut values = Vec::new();
+    
+    parameters.push(alert.r#type.to_uppercase());
+    values.push(alert.value);
+
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    let seq_num = s.seq.fetch_add(1, Ordering::SeqCst);
+
+    let vote = VoteTx {
+        id: format!("stress:{}:{}", s.node_id, seq_num),
+        agent_id: s.node_id.clone(),
+        parameters,
+        values,
+        timestamp_ms,
+    };
+
+    let _ = s.tx_queue.send(vote).await;
+    StatusCode::ACCEPTED
+}
+
 
 async fn handle_votes(State(s): State<ApiState>) -> impl IntoResponse {
     let ledger = s.ledger.read().unwrap();

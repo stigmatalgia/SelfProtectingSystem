@@ -101,15 +101,23 @@ impl Ledger {
                 }
             };
 
-            // Native throughput benchmark can disable state-based dedup to measure raw vote ingestion.
-            if !dedup_disabled && status.current_value == new_value {
-                continue;
+            // If the agent has already voted for this parameter, decrement the count of the previous vote.
+            if let Some(&previous_vote) = status.agent_proposed.get(agent_id) {
+                if previous_vote == new_value {
+                    continue;
+                }
+                if let Some(count) = status.vote_count.get_mut(&previous_vote) {
+                    if *count > 0 {
+                        *count -= 1;
+                    }
+                }
+            } else {
+                status.has_voted.insert(agent_id.to_string(), true);
             }
 
-            // Record the vote
+            // Record the new vote and increment its count
             status.agent_proposed.insert(agent_id.to_string(), new_value);
             *status.vote_count.entry(new_value).or_insert(0) += 1;
-            status.has_voted.insert(agent_id.to_string(), true);
             
             has_effective_vote = true;
 

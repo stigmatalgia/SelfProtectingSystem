@@ -115,10 +115,22 @@ def main():
         for line in follow(f):
             line_lower = line.lower()
             
+            # Recupero (Negative alert)
+            if "negative alert" in line_lower:
+                if os.path.exists(DISABLE_NEGATIVE_MARKER):
+                    continue
+                for alert_type in ALERTS:
+                    if alert_type.lower() in line_lower:
+                        payload = {
+                            "ids": IDS_NAME, "message": "Recovery", 
+                            "type": alert_type, "value": 0, "timestamp": datetime.now().isoformat()
+                        }
+                        alert_queue.put(payload)
+                        break
+                continue
+
             # Attacchi
-            found = False
             for alert_type in ALERTS:
-                line_lower = line.lower()
                 patterns = [
                     alert_type.lower(),                                 # sql_injection
                     alert_type.replace("_", " ").lower(),              # sql injection
@@ -133,19 +145,7 @@ def main():
                     alert_queue.put(payload)
                     sys.stdout.write(f"[MATCH] Found {alert_type} in {IDS_NAME} logs\n")
                     sys.stdout.flush()
-                    found = True
                     break
-            
-            if not found and "negative alert" in line_lower:
-                 # Trattiamo i negative alert separatamente
-                 for alert_type in ALERTS:
-                     if alert_type.lower() in line_lower:
-                         payload = {
-                            "ids": IDS_NAME, "message": "Recovery", 
-                            "type": alert_type, "value": 0, "timestamp": datetime.now().isoformat()
-                         }
-                         alert_queue.put(payload)
-                         break
 
 if __name__ == "__main__":
     main()
