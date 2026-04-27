@@ -43,9 +43,17 @@ echo "Starting sps-node ABCI app..." >> /var/log/sps-node.log
 SPS_FAST_CHECKTX=1 RUST_LOG=info sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
-# ── Start CometBFT Node ─────────────────────────────────────────────────────
-echo "Starting CometBFT consensus engine..." >> /var/log/cometbft.log
-cometbft node --home /root/.cometbft >> /var/log/cometbft.log 2>&1 &
+# ── Start CometBFT Node (supervised restart) ────────────────────────────────
+# CometBFT exits when the ABCI connection drops. The supervisor relaunches it
+# automatically so consensus resumes without manual intervention.
+(
+  while true; do
+    echo "[supervisor] Starting CometBFT..." >> /var/log/cometbft.log
+    cometbft node --home /root/.cometbft >> /var/log/cometbft.log 2>&1
+    echo "[supervisor] CometBFT exited (code $?). Restarting in 2s..." >> /var/log/cometbft.log
+    sleep 2
+  done
+) &
 
 echo "Waiting for sps-node API..."
 for i in $(seq 1 30); do
