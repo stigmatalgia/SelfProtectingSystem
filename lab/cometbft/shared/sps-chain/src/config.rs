@@ -45,6 +45,8 @@ pub struct ConsensusSection {
 pub struct LedgerSection {
     pub parameters: Vec<String>,
     pub agents_count: usize,
+    #[serde(default)]
+    pub disable_dedup: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

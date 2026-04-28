@@ -1,9 +1,14 @@
-//! sps-bench — Native HTTP throughput injector for sps-node.
+//! sps-bench — raw CometBFT WebSocket injector for pure mempool throughput tests.
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 #[derive(Debug, Serialize)]
 struct BenchStats {
@@ -11,191 +16,189 @@ struct BenchStats {
     n: usize,
     #[serde(rename = "Sent")]
     sent: usize,
-    #[serde(rename = "Transactions")]
-    transactions: u64,
-    #[serde(rename = "SuccessRate")]
-    success_rate: f64,
-    #[serde(rename = "SentTime")]            // Added to track true injection time
-    sent_time: f64, 
-    #[serde(rename = "TotalTimeSeconds")]
-    total_time_seconds: f64,
-    #[serde(rename = "TPS")]
-    tps: f64,
     #[serde(rename = "SendErrors")]
     send_errors: usize,
+    #[serde(rename = "PrecomputeSeconds")]
+    precompute_seconds: f64,
+    #[serde(rename = "SentTime")]
+    sent_time: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct AlertPayload {
-    ids: String,
-    message: String,
-    #[serde(rename = "type")]
-    alert_type: String,
-    value: u64,
-    timestamp: String,
+struct VoteTx {
+    id: String,
+    agent_id: String,
+    parameters: Vec<String>,
+    values: Vec<u64>,
+    timestamp_ms: u64,
 }
 
-async fn http_get(addr: &str, path: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let mut stream = TcpStream::connect(addr).await?;
-    let req = format!("GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", path, addr);
-    stream.write_all(req.as_bytes()).await?;
-    let mut resp = Vec::new();
-    stream.read_to_end(&mut resp).await?;
-    let s = String::from_utf8_lossy(&resp);
-    Ok(if let Some(pos) = s.find("\r\n\r\n") { s[pos + 4..].to_string() } else { s.to_string() })
+struct Config {
+    n: usize,
+    concurrency: usize,
+    step: usize,
+    targets: Vec<String>,
 }
 
-async fn get_tx_count(api_addr: &str) -> u64 {
-    match http_get(api_addr, "/tx_count").await {
-        Ok(body) => {
-            let v: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
-            v.get("count").and_then(|c| c.as_u64()).unwrap_or(0)
+fn parse_args() -> Config {
+    let args: Vec<String> = std::env::args().collect();
+    let mut n = 0usize;
+    let mut concurrency = 64usize;
+    let mut step = 0usize;
+    let mut targets =
+        "validator0:26657,validator1:26657,validator2:26657".to_string();
+
+    let mut i = 1usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--n" | "-n" => {
+                i += 1;
+                n = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(0);
+            }
+            "--concurrency" | "-c" => {
+                i += 1;
+                concurrency = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(64);
+            }
+            "--step" | "-s" => {
+                i += 1;
+                step = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(0);
+            }
+            "--targets" => {
+                i += 1;
+                targets = args.get(i).cloned().unwrap_or(targets);
+            }
+            _ => {}
         }
-        Err(_) => 0,
+        i += 1;
+    }
+
+    let parsed_targets: Vec<String> = targets
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    Config {
+        n,
+        concurrency,
+        step,
+        targets: parsed_targets,
     }
 }
 
 #[inline]
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
-struct Config { n: usize, target: String, api: String, concurrency: usize, step: usize }
+fn build_rpc_frames(n: usize, step: usize) -> Vec<String> {
+    let mut frames = Vec::with_capacity(n);
+    for i in 0..n {
+        let vote = VoteTx {
+            id: format!("sps-bench:s{}:{}", step, i),
+            agent_id: format!("sps-bench:{}", i),
+            parameters: vec!["SQL_INJECTION".to_string()],
+            values: vec![1],
+            timestamp_ms: now_ms(),
+        };
 
-fn parse_args() -> Config {
-    let args: Vec<String> = std::env::args().collect();
-    let mut n = 0usize;
-    let mut target = "127.0.0.1:3000".to_string(); 
-    let mut api    = "127.0.0.1:3000".to_string();
-    let mut concurrency = 8usize;
-    let mut step = 0usize;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--n" | "-n" => { i += 1; n = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(0); }
-            "--target" => { i += 1; target = args.get(i).cloned().unwrap_or(target); }
-            "--api" => { i += 1; api = args.get(i).cloned().unwrap_or(api); }
-            "--concurrency" | "-c" => { i += 1; concurrency = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(8); }
-            "--step" | "-s" => { i += 1; step = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(0); }
-            _ => {}
-        }
-        i += 1;
+        let tx_json_bytes = serde_json::to_vec(&vote).expect("VoteTx JSON serialization failed");
+        let tx_b64 = BASE64_STANDARD.encode(tx_json_bytes);
+        let rpc = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": format!("bench-{}", i),
+            "method": "broadcast_tx_async",
+            "params": { "tx": tx_b64 }
+        });
+        frames.push(rpc.to_string());
     }
-    Config { n, target, api, concurrency, step }
+    frames
+}
+
+async fn open_ws(target: &str) -> Result<WebSocketStream<MaybeTlsStream<TcpStream>>, String> {
+    let url = format!("ws://{}/websocket", target);
+    match connect_async(&url).await {
+        Ok((ws, _)) => Ok(ws),
+        Err(e) => Err(format!("websocket connect failed for {}: {}", target, e)),
+    }
 }
 
 #[tokio::main]
 async fn main() {
     let cfg = parse_args();
-    if cfg.n == 0 { std::process::exit(1); }
+    if cfg.n == 0 || cfg.targets.is_empty() {
+        std::process::exit(1);
+    }
 
-    let baseline_tx = get_tx_count(&cfg.api).await;
+    let precompute_start = Instant::now();
+    let frames = Arc::new(build_rpc_frames(cfg.n, cfg.step));
+    let precompute_seconds = precompute_start.elapsed().as_secs_f64();
+
+    let workers = cfg.concurrency.max(1).min(cfg.n.max(1));
     let send_errors = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let per_task = (cfg.n + cfg.concurrency - 1) / cfg.concurrency;
+    let sent_ok = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    let global_start = Instant::now();
-    let mut handles = Vec::with_capacity(cfg.concurrency);
+    let send_start = Instant::now();
+    let mut handles = Vec::with_capacity(workers);
 
-    for task_id in 0..cfg.concurrency {
-        let start_idx = task_id * per_task;
-        let end_idx   = ((task_id + 1) * per_task).min(cfg.n);
-        if start_idx >= end_idx { break; }
+    for worker_id in 0..workers {
+        let target = cfg.targets[worker_id % cfg.targets.len()].clone();
+        let all_frames = frames.clone();
+        let errs = send_errors.clone();
+        let sent = sent_ok.clone();
 
-        let target_addr  = cfg.target.clone();
-        let agent_id     = format!("sps-bench-t{}-s{}", task_id, cfg.step);
-        let errs         = send_errors.clone();
-
-        handles.push(tokio::spawn(async move {
-            let mut local_errors = 0usize;
-            match TcpStream::connect(&target_addr).await {
-                Ok(stream) => {
-                    let (mut rh, mut wh) = stream.into_split();
-                    let reader_handle = tokio::spawn(async move {
-                        let mut buf = [0u8; 8192];
-                        while let Ok(n) = rh.read(&mut buf).await { if n == 0 { break; } }
-                    });
-
-                    for idx in start_idx..end_idx {
-                        let is_last = idx == end_idx - 1;
-                        let conn_hdr = if is_last { "close" } else { "keep-alive" };
-                        let vote_id = format!("sps-bench:s{}:t{}:{}", cfg.step, task_id, idx);
-                        let payload = vec![AlertPayload {
-                            ids: agent_id.clone(),
-                            message: vote_id,
-                            alert_type: "SQL_INJECTION".to_string(),
-                            value: 1,
-                            timestamp: now_ms().to_string(),
-                        }];
-
-                        let body = serde_json::to_string(&payload).unwrap();
-                        let req = format!(
-                            "POST /alert HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {}\r\n\r\n{}",
-                            target_addr, body.len(), conn_hdr, body
-                        );
-
-                        if wh.write_all(req.as_bytes()).await.is_err() {
-                            local_errors += 1;
-                            break;
-                        }
-                    }
-                    let _ = wh.shutdown().await;
-                    let _ = tokio::time::timeout(Duration::from_secs(60), reader_handle).await;
+handles.push(tokio::spawn(async move {
+            let ws = match open_ws(&target).await {
+                Ok(ws) => ws,
+                Err(_) => {
+                    let failed = (worker_id..all_frames.len()).step_by(workers).count();
+                    errs.fetch_add(failed, std::sync::atomic::Ordering::Relaxed);
+                    return;
                 }
-                Err(_) => { local_errors += end_idx - start_idx; }
+            };
+
+            // 1. SDOPPIAMO IL WEBSOCKET IN SCRITTURA E LETTURA
+            let (mut write, mut read) = ws.split();
+
+            // 2. CREIAMO UN TASK BACKGROUND PER SVUOTARE IL BUFFER TCP
+            tokio::spawn(async move {
+                while let Some(_) = read.next().await {
+                    // Ignoriamo la risposta, vogliamo solo svuotare il buffer
+                }
+            });
+
+            // 3. INVIAMO ALLA MASSIMA VELOCITÀ SUL CANALE DI SCRITTURA
+            for idx in (worker_id..all_frames.len()).step_by(workers) {
+                if write
+                    .send(Message::Text(all_frames[idx].clone().into()))
+                    .await
+                    .is_ok()
+                {
+                    sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    errs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
-            errs.fetch_add(local_errors, std::sync::atomic::Ordering::Relaxed);
+
+            let _ = write.send(Message::Close(None)).await;
         }));
     }
 
-    for h in handles { let _ = h.await; }
-    let actual_send_duration = global_start.elapsed().as_secs_f64();
-    eprintln!("[sps-bench] Burst dispatched to mempool in {:.3}s.", actual_send_duration);
-    
-    let mut final_tx = baseline_tx;
-    let mut last_count = baseline_tx;
-    let mut stable_ticks = 0u32;
-    let poll_deadline = Instant::now() + Duration::from_secs(300); // Increased deadline
-
-    loop {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        let current = get_tx_count(&cfg.api).await;
-        let committed = current.saturating_sub(baseline_tx);
-
-        if committed >= cfg.n as u64 {
-            final_tx = current;
-            break;
-        }
-        if current == last_count {
-            stable_ticks += 1;
-            if stable_ticks >= 15 {
-                final_tx = current;
-                break;
-            }
-        } else {
-            stable_ticks = 0;
-        }
-        last_count = current;
-
-        if Instant::now() >= poll_deadline {
-            final_tx = current;
-            break;
-        }
+    for h in handles {
+        let _ = h.await;
     }
-
-    let total_time = global_start.elapsed().as_secs_f64();
-    let committed  = final_tx.saturating_sub(baseline_tx);
-    let n_errors   = send_errors.load(std::sync::atomic::Ordering::Relaxed);
-
+    let sent_time = send_start.elapsed().as_secs_f64();
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let stats = BenchStats {
         n: cfg.n,
-        sent: cfg.n,
-        transactions: committed,
-        success_rate: if cfg.n > 0 { committed as f64 / cfg.n as f64 * 100.0 } else { 100.0 },
-        sent_time: actual_send_duration, // Correctly populating the new field
-        total_time_seconds: total_time,
-        tps: if total_time > 0.0 { committed as f64 / total_time } else { 0.0 },
-        send_errors: n_errors,
+        sent: sent_ok.load(std::sync::atomic::Ordering::Relaxed),
+        send_errors: send_errors.load(std::sync::atomic::Ordering::Relaxed),
+        precompute_seconds,
+        sent_time,
     };
 
     println!("BENCH_STATS:{}", serde_json::to_string(&stats).unwrap());

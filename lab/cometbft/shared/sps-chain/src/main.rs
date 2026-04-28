@@ -145,6 +145,7 @@ async fn main() {
     );
 
     let mut ledger = Ledger::new(cfg.ledger.parameters.clone(), cfg.ledger.agents_count);
+    ledger.dedup_disabled = cfg.ledger.disable_dedup;
     ledger.populate_action_map();
     let ledger = Arc::new(RwLock::new(ledger));
 

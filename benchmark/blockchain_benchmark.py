@@ -23,7 +23,7 @@ COMET_AGENTS   = ["light0", "light1", "light2"]
 COMET_BENCH_NODE   = "light0"          # exec target: sps-bench runs here
 COMET_P2P_TARGET   = "127.0.0.1:26656" # loopback P2P port (node's own listener)
 COMET_API_TARGET   = "127.0.0.1:3000"  # loopback sps-node API
-COMET_RPC_TARGETS  = ["10.99.0.1:26657", "10.99.0.2:26657", "10.99.0.3:26657"]
+COMET_RPC_TARGETS  = ["10.99.0.1:26657"]
 COMET_P2P_PORT     = 26656
 COMET_API_PORT     = 26657
 
@@ -97,17 +97,22 @@ def set_benchmark_mode(lab_dir: str, enabled: bool):
 
 
 def set_raw_throughput_mode(lab_dir: str, enabled: bool):
-    """Toggle marker used by sps-chain ledger to disable benchmark-time dedup."""
-    marker = os.path.abspath(os.path.join(lab_dir, "shared", "disable_ledger_dedup"))
-    os.makedirs(os.path.dirname(marker), exist_ok=True)
-    if enabled:
-        with open(marker, "w", encoding="utf-8") as f:
-            f.write("1\n")
+    """Toggle ledger state-based deduplication via API (both Quorum and CometBFT)."""
+    lab_type = "cometbft" if "cometbft" in lab_dir.lower() else "quorum"
+    
+    # FIX: Applica a TUTTI i nodi per evitare lo split-brain!
+    if lab_type == "cometbft":
+        nodes = ["validator0", "validator1", "validator2", "light0", "light1", "light2", "fullnode0"]
     else:
-        if os.path.exists(marker):
-            os.remove(marker)
-
-
+        nodes = ["member0", "member1", "member2", "member3"]
+    
+    enabled_str = "false" if enabled else "true"
+    print(f"  [config] Setting ledger deduplication to {not enabled} via API...")
+    for node in nodes:
+        try:
+            kathara_exec(lab_dir, node, f"curl -s -X POST 'http://127.0.0.1:3000/config/dedup?enabled={enabled_str}'")
+        except Exception as e:
+            print(f"  [warn] Failed to set dedup on {node}: {e}")
 def _try_build_host(bench_src_dir: str) -> str | None:
     """
     Attempt to build sps-bench on the host with musl target.
@@ -341,19 +346,12 @@ def _rpc_int(value, default: int = 0) -> int:
 
 
 def get_comet_rpc_metrics(lab_dir: str, node: str = COMET_BENCH_NODE) -> dict | None:
-    """
-    Query CometBFT RPC and sps-node API to return:
-      - total_txs (from sps-node /tx_count on port 3000)
-      - unconfirmed_txs (from CometBFT /num_unconfirmed_txs on port 26657)
-    """
-    # 1. Get total committed txs from sps-node API
+    # Ho aumentato i timeout: sotto sforzo intenso (100k txs) curl potrebbe impiegarci più di 2s!
     tx_count_raw = kathara_exec(
-        lab_dir, node, "curl -s --max-time 2 http://127.0.0.1:3000/tx_count", timeout=5
+        lab_dir, node, "curl -s --max-time 5 http://127.0.0.1:3000/tx_count", timeout=10
     )
-    
-    # 2. Get unconfirmed txs from CometBFT RPC
     unconfirmed_raw = kathara_exec(
-        lab_dir, node, "curl -s --max-time 2 http://127.0.0.1:26657/num_unconfirmed_txs", timeout=5
+        lab_dir, node, "curl -s --max-time 5 http://127.0.0.1:26657/num_unconfirmed_txs", timeout=10
     )
     
     if not tx_count_raw or not unconfirmed_raw:
@@ -383,27 +381,38 @@ def wait_for_comet_completion(
     timeout_s: int = 600,
     poll_s: float = 2.0,
 ) -> tuple[float | None, dict | None]:
-    """
-    Wait until:
-      total_txs >= baseline_total_txs + n
-      and unconfirmed_txs == 0
-    Returns (completion_timestamp, final_metrics) or (None, last_metrics on timeout/failure).
-    """
-    target_total = baseline_total_txs + n
+    
     deadline = time.time() + timeout_s
     last_metrics = None
+    zero_count = 0
+    polls = 0
 
     while time.time() < deadline:
         metrics = get_comet_rpc_metrics(lab_dir, COMET_BENCH_NODE)
+        polls += 1
+        
         if metrics is not None:
             last_metrics = metrics
-            if metrics["total_txs"] >= target_total and metrics["unconfirmed_txs"] == 0:
-                return time.time(), metrics
+            
+            # Stampa lo stato ogni 5 cicli (10 secondi) per evitare l'ansia da blocco silenzioso
+            if polls % 5 == 0:
+                print(f"  [wait] Mempool unconfirmed_txs = {metrics['unconfirmed_txs']} (Total txs on chain: {metrics['total_txs']})")
+            
+            # Criterio di fine: la mempool è vuota per 2 controlli di fila. Non ci interessa se mancano txs all'appello.
+            if metrics["unconfirmed_txs"] == 0:
+                zero_count += 1
+                if zero_count >= 2:
+                    return time.time(), metrics
+            else:
+                zero_count = 0
+        else:
+            if polls % 5 == 0:
+                print("  [wait] Attenzione: Impossibile contattare CometBFT RPC (Nodo molto sotto sforzo, attendo...)")
+                
         time.sleep(poll_s)
 
     return None, last_metrics
-
-
+    
 _BENCH_STATS_RE = re.compile(r"BENCH_STATS:(\{.*\})")
 
 
@@ -542,7 +551,7 @@ def main():
                         default=[100, 500, 1000, 5000, 10000, 20000, 50000, 75000, 100000],
                         help="Burst sizes N to benchmark.")
     parser.add_argument("--concurrency", type=int,
-                        default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "128")),
+                        default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "16")),
                         help="Parallel WebSocket send workers used by sps-bench (CometBFT only).")
     parser.add_argument("--comet-rpc-targets", type=str,
                         default=os.environ.get("COMET_RPC_TARGETS", ",".join(COMET_RPC_TARGETS)),

@@ -80,10 +80,11 @@ def generate_ed25519_identity():
 
 # ── Config TOML builders ────────────────────────────────────────────────────
 
-def build_sps_config(node_id: str, role: str, listen_ip: str, peers: list[str], actuator_url: str = "") -> str:
+def build_sps_config(node_id: str, role: str, listen_ip: str, peers: list[str], actuator_url: str = "", disable_dedup: bool = False) -> str:
     """Render the application specific sps_config.toml"""
     peer_list = ", ".join(f'"{p}"' for p in peers)
     actuator_section = f'\n[actuator]\nurl = "{actuator_url}"\n' if actuator_url else ""
+    dedup_val = "true" if disable_dedup else "false"
 
     return f"""# sps-node configuration
 
@@ -101,6 +102,7 @@ block_max_txs      = 500000
 [ledger]
 parameters   = {json_list(PARAMETERS)}
 agents_count = {AGENTS_COUNT}
+disable_dedup = {dedup_val}
 
 [peers]
 persistent = [{peer_list}]
@@ -123,8 +125,8 @@ addr_book_strict = false
 allow_duplicate_ip = true
 
 [mempool]
-size = 200000
-cache_size = 200000
+size = 50000
+cache_size = 50000
 max_txs_bytes = 1073741824
 recheck = false
 

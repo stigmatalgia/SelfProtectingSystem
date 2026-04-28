@@ -42,15 +42,17 @@ def set_benchmark_mode(lab_dir, enabled):
             os.remove(marker)
 
 def set_ledger_dedup_override(lab_dir, disable_dedup):
-    """Toggle marker that disables ledger state-based deduplication (CometBFT only)."""
-    marker = os.path.abspath(os.path.join(lab_dir, "shared", "disable_ledger_dedup"))
-    os.makedirs(os.path.dirname(marker), exist_ok=True)
-    if disable_dedup:
-        with open(marker, "w", encoding="utf-8") as f:
-            f.write("1\n")
-    else:
-        if os.path.exists(marker):
-            os.remove(marker)
+    """Toggle ledger state-based deduplication via API (both Quorum and CometBFT)."""
+    lab_type = "cometbft" if "cometbft" in lab_dir.lower() else "quorum"
+    nodes = ["light0", "light1", "light2"] if lab_type == "cometbft" else ["member0", "member1", "member2"]
+    
+    enabled_str = "false" if disable_dedup else "true"
+    print(f"Setting ledger deduplication to {not disable_dedup} via API...")
+    for node in nodes:
+        try:
+            run_cmd(f"kathara exec -d {lab_dir} {node} -- curl -s -X POST 'http://localhost:3000/config/dedup?enabled={enabled_str}'")
+        except Exception as e:
+            print(f"Warning: Failed to set dedup on {node}: {e}")
 
 def get_ids_counts(lab_dir):
     try:

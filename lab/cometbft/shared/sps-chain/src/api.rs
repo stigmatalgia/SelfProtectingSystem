@@ -52,6 +52,7 @@ pub fn make_router(state: ApiState) -> Router {
         .route("/stats", get(handle_stats))
         .route("/tx_count", get(handle_tx_count))
         .route("/alive", get(handle_alive))
+        .route("/config/dedup", post(handle_config_dedup))
         .with_state(state)
 }
 
@@ -193,4 +194,19 @@ async fn handle_alive(State(s): State<ApiState>) -> impl IntoResponse {
         node_id: s.node_id.clone(),
         role: s.role.clone(),
     })
+}
+
+#[derive(serde::Deserialize)]
+struct DedupParams {
+    enabled: bool,
+}
+
+async fn handle_config_dedup(
+    State(s): State<ApiState>,
+    axum::extract::Query(params): axum::extract::Query<DedupParams>,
+) -> impl IntoResponse {
+    let mut ledger = s.ledger.write().unwrap();
+    ledger.dedup_disabled = !params.enabled;
+    log::info!("[API] Deduplication set to: {}", params.enabled);
+    StatusCode::OK
 }

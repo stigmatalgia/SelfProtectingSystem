@@ -23,6 +23,7 @@ const MAX_RETRIES = 5;       // Maximum retry attempts for failed transactions
 const MAX_QUEUE_LENGTH = 25000;
 let totalAlertsProcessed = 0;
 let totalAlertsReceived = 0;
+let ledgerDedupDisabled = false;
 
 const VALID_ALERTS = [
     'SAFE_ENVIRONMENT',
@@ -123,8 +124,7 @@ function enqueueAlert(data) {
 
     const value = data.value !== undefined ? data.value : 1;
 
-    const dedupDisabled = fs.existsSync('/shared/disable_ledger_dedup');
-    if (!dedupDisabled && lastVotedState[type] === value) {
+    if (!ledgerDedupDisabled && lastVotedState[type] === value) {
         return { success: true, status: 'deduplicated', type, value };
     }
 
@@ -323,6 +323,14 @@ const server = http.createServer((req, res) => {
                 res.end(JSON.stringify({ error: e.message }));
             }
         });
+    }
+    else if (req.method === 'POST' && req.url.startsWith('/config/dedup')) {
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const enabled = url.searchParams.get('enabled') === 'true';
+        ledgerDedupDisabled = !enabled;
+        console.log(`[CONFIG] Deduplication set to: ${enabled}`);
+        res.writeHead(200);
+        res.end(JSON.stringify({ success: true, deduplication: enabled }));
     }
     else {
         res.writeHead(404);

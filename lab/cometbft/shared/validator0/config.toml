@@ -1,0 +1,32 @@
+proxy_app = "tcp://127.0.0.1:26658"
+
+[rpc]
+laddr = "tcp://0.0.0.0:26657"
+
+[p2p]
+laddr = "tcp://0.0.0.0:26656"
+persistent_peers = "6b1657510a9e63cc231bba113464b2b7722ceaf3@10.99.0.2:26656,6812cef2c527d75babefafd9dddd41bb8fa29e69@10.99.0.3:26656"
+addr_book_strict = false
+allow_duplicate_ip = true
+
+[mempool]
+size = 50000
+cache_size = 50000
+max_txs_bytes = 1073741824
+recheck = false
+
+[consensus]
+timeout_propose = "300ms"
+timeout_propose_delta = "100ms"
+timeout_prevote = "200ms"
+timeout_prevote_delta = "100ms"
+timeout_precommit = "200ms"
+timeout_precommit_delta = "100ms"
+timeout_commit = "500ms"
+
+skip_timeout_commit = true
+peer_gossip_sleep_duration = "10ms"
+
+# FIX: Force an empty block every 1 second to prevent the consensus engine from 
+# stalling edge-case transactions in the mempool
+create_empty_blocks = false

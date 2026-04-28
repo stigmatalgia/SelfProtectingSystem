@@ -151,8 +151,8 @@ async fn main() {
         let errs = send_errors.clone();
         let sent = sent_ok.clone();
 
-        handles.push(tokio::spawn(async move {
-            let mut ws = match open_ws(&target).await {
+handles.push(tokio::spawn(async move {
+            let ws = match open_ws(&target).await {
                 Ok(ws) => ws,
                 Err(_) => {
                     let failed = (worker_id..all_frames.len()).step_by(workers).count();
@@ -161,8 +161,19 @@ async fn main() {
                 }
             };
 
+            // 1. SDOPPIAMO IL WEBSOCKET IN SCRITTURA E LETTURA
+            let (mut write, mut read) = ws.split();
+
+            // 2. CREIAMO UN TASK BACKGROUND PER SVUOTARE IL BUFFER TCP
+            tokio::spawn(async move {
+                while let Some(_) = read.next().await {
+                    // Ignoriamo la risposta, vogliamo solo svuotare il buffer
+                }
+            });
+
+            // 3. INVIAMO ALLA MASSIMA VELOCITÀ SUL CANALE DI SCRITTURA
             for idx in (worker_id..all_frames.len()).step_by(workers) {
-                if ws
+                if write
                     .send(Message::Text(all_frames[idx].clone().into()))
                     .await
                     .is_ok()
@@ -173,8 +184,7 @@ async fn main() {
                 }
             }
 
-            let _ = ws.send(Message::Close(None)).await;
-            let _ = ws.next().await;
+            let _ = write.send(Message::Close(None)).await;
         }));
     }
 
@@ -182,7 +192,7 @@ async fn main() {
         let _ = h.await;
     }
     let sent_time = send_start.elapsed().as_secs_f64();
-
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let stats = BenchStats {
         n: cfg.n,
         sent: sent_ok.load(std::sync::atomic::Ordering::Relaxed),

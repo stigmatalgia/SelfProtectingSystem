@@ -1,0 +1,21 @@
+# sps-node configuration
+
+[node]
+id       = "16f39d4eb80f1846621498c1dd54782a22735344"
+role     = "agent"
+listen_addr = "0.0.0.0:26656"
+api_addr    = "0.0.0.0:3000"
+
+[consensus]
+timeout_propose_ms = 200
+timeout_commit_ms  = 200
+block_max_txs      = 500000
+
+[ledger]
+parameters   = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"]
+agents_count = 3
+disable_dedup = false
+
+[peers]
+persistent = ["09bf728885cb05b821a91057172b724f6eebd34f@10.99.0.1:26656", "6b1657510a9e63cc231bba113464b2b7722ceaf3@10.99.0.2:26656", "6812cef2c527d75babefafd9dddd41bb8fa29e69@10.99.0.3:26656", "f14b1c24795b085e21a35a23447441b840fbd84b@10.99.0.14:26656"]
+

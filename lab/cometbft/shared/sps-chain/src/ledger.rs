@@ -5,7 +5,6 @@ use std::path::Path;
 use sha2::{Sha256, Digest};
 use crate::types::ActionEvent;
 
-const DISABLE_LEDGER_DEDUP_MARKER: &str = "/shared/disable_ledger_dedup";
 
 #[derive(Debug, Default)]
 struct ParamStatus {
@@ -21,6 +20,7 @@ pub struct Ledger {
     state_action: HashMap<String, String>, // sha256(state_str) -> action
     agents_count: usize,
     committed_txs: u64,
+    pub dedup_disabled: bool,
 }
 
 impl Ledger {
@@ -35,6 +35,7 @@ impl Ledger {
             state_action: HashMap::new(),
             agents_count,
             committed_txs: 0,
+            dedup_disabled: false,
         }
     }
 
@@ -88,7 +89,7 @@ impl Ledger {
         parameters: &[String],
         values: &[u64],
     ) -> Option<ActionEvent> {
-        let dedup_disabled = Path::new(DISABLE_LEDGER_DEDUP_MARKER).exists();
+        let dedup_disabled = self.dedup_disabled;
         let mut changed = false;
         let mut has_effective_vote = false;
 
