@@ -108,7 +108,7 @@ persistent = [{peer_list}]
 """
 
 def build_comet_config(peers: list[str]) -> str:
-    """Render the native CometBFT config.toml with ultra-low latency tuning."""
+    """Render the native CometBFT config.toml tuned for raw TPS benchmarks."""
     peers_str = ",".join(peers)
     
     return f"""proxy_app = "tcp://127.0.0.1:26658"
@@ -123,10 +123,9 @@ addr_book_strict = false
 allow_duplicate_ip = true
 
 [mempool]
-# FIX: Increase Mempool size from 5,000 to 150,000 to handle massive bursts
-size = 150000
-cache_size = 150000
-max_txs_bytes = 536870912
+size = 200000
+cache_size = 200000
+max_txs_bytes = 1073741824
 recheck = false
 
 [consensus]
@@ -136,7 +135,7 @@ timeout_prevote = "200ms"
 timeout_prevote_delta = "100ms"
 timeout_precommit = "200ms"
 timeout_precommit_delta = "100ms"
-timeout_commit = "200ms"
+timeout_commit = "500ms"
 
 skip_timeout_commit = true
 peer_gossip_sleep_duration = "10ms"

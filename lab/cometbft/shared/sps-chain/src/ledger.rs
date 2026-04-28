@@ -103,7 +103,7 @@ impl Ledger {
 
             // If the agent has already voted for this parameter, decrement the count of the previous vote.
             if let Some(&previous_vote) = status.agent_proposed.get(agent_id) {
-                if previous_vote == new_value {
+                if previous_vote == new_value && !dedup_disabled {
                     continue;
                 }
                 if let Some(count) = status.vote_count.get_mut(&previous_vote) {
@@ -124,10 +124,7 @@ impl Ledger {
             let votes = *status.vote_count.get(&new_value).unwrap();
             let threshold = self.agents_count / 2;
             
-            log::info!(
-                "[LEDGER] {} check | Value: {} | Votes: {} | Threshold: {}",
-                param, new_value, votes, threshold
-            );
+            log::debug!("[LEDGER] {} check | Value: {} | Votes: {} | Threshold: {}", param, new_value, votes, threshold);
 
             if votes > threshold && status.current_value != new_value {
                 log::info!(

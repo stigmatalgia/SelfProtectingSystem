@@ -34,7 +34,7 @@ impl SpsAbciApp {
         let vote: VoteTx = serde_json::from_slice(tx_data)
             .map_err(|e| format!("JSON Decode Error: {}. Data: {}", e, tx_hex))?;
 
-        log::info!("[ABCI] Processing Vote from agent: {}", vote.agent_id);
+        log::debug!("[ABCI] Processing Vote from agent: {}", vote.agent_id);
 
         let mut ledger_guard = self.ledger.write().unwrap();
         let action_opt =
@@ -45,6 +45,16 @@ impl SpsAbciApp {
             let _ = self.action_tx.send(event);
         }
 
+        Ok(())
+    }
+
+    /// Pure validation for CheckTx (no ledger locking)
+    fn validate_vote_bytes(&self, tx_data: &[u8]) -> Result<(), String> {
+        if tx_data.is_empty() {
+            return Ok(());
+        }
+        let _: VoteTx = serde_json::from_slice(tx_data)
+            .map_err(|e| format!("ABCI CheckTx Validation Failed: {}", e))?;
         Ok(())
     }
 }
@@ -100,8 +110,9 @@ impl Consensus for SpsAbciApp {
 impl Mempool for SpsAbciApp {
     fn check_tx(&self, check_tx_request: RequestCheckTx) -> ResponseCheckTx {
         let mut resp = ResponseCheckTx::default();
-        if let Err(msg) = self.process_vote_bytes(&check_tx_request.tx) {
-            log::error!("[ABCI] {}", msg);
+        // Stateless validation to avoid write lock contention
+        if let Err(msg) = self.validate_vote_bytes(&check_tx_request.tx) {
+            log::error!("[ABCI] CheckTx Failed: {}", msg);
             resp.code = 1;
             resp.log = msg;
         }
@@ -114,7 +125,7 @@ impl Snapshot for SpsAbciApp {}
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("debug")
+        env_logger::Env::default().default_filter_or("info")
     ).init();
 
     let config_path = std::env::args()

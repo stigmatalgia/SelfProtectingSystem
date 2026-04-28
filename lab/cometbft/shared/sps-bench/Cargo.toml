@@ -13,6 +13,9 @@ path = "sps-bench.rs"
 tokio       = { version = "1", features = ["full"] }
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
+tokio-tungstenite = "0.23"
+futures-util = "0.3"
+base64 = "0.22"
 
 [profile.release]
 opt-level     = 3
