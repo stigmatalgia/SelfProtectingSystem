@@ -26,11 +26,11 @@ struct BenchStats {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VoteTx {
-    id: String,
-    agent_id: String,
-    parameters: Vec<String>,
-    values: Vec<u64>,
-    timestamp_ms: u64,
+    pub id: u64,
+    pub agent_id: u32,
+    pub param_mask: u32,
+    pub values: [u64; 4],
+    pub timestamp_ms: u64,
 }
 
 struct Config {
@@ -106,15 +106,15 @@ fn build_rpc_frames(n: usize, step: usize) -> Vec<String> {
     let mut frames = Vec::with_capacity(n);
     for i in 0..n {
         let vote = VoteTx {
-            id: format!("sps-bench:s{}:{}", step, i),
-            agent_id: format!("sps-bench:{}", i),
-            parameters: vec!["SQL_INJECTION".to_string()],
-            values: vec![1],
+            id: (step as u64) * 1_000_000 + (i as u64),
+            agent_id: (i % 3) as u32,
+            param_mask: 0b0001, // SQL_INJECTION bit
+            values: [1, 0, 0, 0],
             timestamp_ms: now_ms(),
         };
 
-        let tx_json_bytes = serde_json::to_vec(&vote).expect("VoteTx JSON serialization failed");
-        let tx_b64 = BASE64_STANDARD.encode(tx_json_bytes);
+        let tx_bin_bytes = bincode::serialize(&vote).expect("VoteTx bincode serialization failed");
+        let tx_b64 = BASE64_STANDARD.encode(tx_bin_bytes);
         let rpc = serde_json::json!({
             "jsonrpc": "2.0",
             "id": format!("bench-{}", i),

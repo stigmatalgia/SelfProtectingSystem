@@ -34,7 +34,7 @@ while [ ! -f /shared/handshake/validator0 ]; do sleep 1; done
 
 # ── Start sps-node (ABCI Server + HTTP API) ─────────────────────────────────
 echo "Starting sps-node ABCI app..." >> /var/log/sps-node.log
-SPS_FAST_CHECKTX=1 RUST_LOG=warn sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
+SPS_FAST_CHECKTX=1 RUST_LOG=info sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
 # ── Start CometBFT Node ─────────────────────────────────────────────────────

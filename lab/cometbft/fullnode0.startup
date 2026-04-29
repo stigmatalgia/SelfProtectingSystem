@@ -37,7 +37,7 @@ cp /shared/handshake/validator0_genesis.json /root/.cometbft/config/genesis.json
 
 # ── Start sps-node ──────────────────────────────────────────────────────────
 echo "Starting sps-node (fullnode0)..." >> /var/log/sps-node.log
-SPS_FAST_CHECKTX=1 RUST_LOG=warn sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
+SPS_FAST_CHECKTX=1 RUST_LOG=info sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
 # ── Start CometBFT Node ─────────────────────────────────────────────────────

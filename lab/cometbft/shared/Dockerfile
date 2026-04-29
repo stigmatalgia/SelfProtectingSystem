@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y musl-tools pkg-config && rm -rf /var/li
 RUN rustup target add x86_64-unknown-linux-musl
 ENV RUSTC_BOOTSTRAP=1
 # Force fresh build
-ENV CACHE_BUSTER=20240423_v4
+ENV CACHE_BUSTER=20260429_vZERO_HEAP
 
 WORKDIR /build
 COPY sps-chain/Cargo.toml sps-chain/Cargo.lock sps-chain/

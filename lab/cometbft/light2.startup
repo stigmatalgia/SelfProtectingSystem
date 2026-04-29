@@ -27,7 +27,7 @@ cp /shared/light2/sps_config.toml /root/sps_config.toml
 
 # ── Start sps-node ──────────────────────────────────────────────────────────
 echo "Starting sps-node (light2)..." >> /var/log/sps-node.log
-SPS_FAST_CHECKTX=1 RUST_LOG=warn sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
+SPS_FAST_CHECKTX=1 RUST_LOG=info sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
 # ── Start CometBFT Node ─────────────────────────────────────────────────────

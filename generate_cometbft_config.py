@@ -133,25 +133,25 @@ max_num_outbound_peers = 40
 
 [mempool]
 size = 50000
-cache_size = 100
-max_txs_bytes = 268435456
-max_tx_bytes = 65536
+cache_size = 20000
+max_txs_bytes = 2684354560
+max_tx_bytes = 268435456
 recheck = false
 
 [consensus]
-timeout_propose = "800ms"
-timeout_propose_delta = "200ms"
-timeout_prevote = "300ms"
-timeout_prevote_delta = "100ms"
+timeout_propose = "10000ms"
+timeout_propose_delta = "100ms"
+timeout_prevote = "30ms"
+timeout_prevote_delta = "50000ms"
 timeout_precommit = "300ms"
 timeout_precommit_delta = "100ms"
-timeout_commit = "1200ms"
+timeout_commit = "10000ms"
 
-skip_timeout_commit = false
-peer_gossip_sleep_duration = "30ms"
+skip_timeout_commit = true
+peer_gossip_sleep_duration = "10ms"
 
 create_empty_blocks = true
-create_empty_blocks_interval = "250ms"
+create_empty_blocks_interval = "500ms"
 """
 
 def json_list(items: list[str]) -> str:

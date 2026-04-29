@@ -4,8 +4,9 @@ mod ledger;
 mod api;
 mod forwarder;
 
-use std::sync::{Arc, RwLock};
-use std::time::Duration; // Added missing import for backoff logic
+use std::sync::{Arc, RwLock, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 use crate::config::NodeConfig;
 use crate::types::{ActionEvent, VoteTx};
@@ -23,45 +24,23 @@ struct SpsAbciApp {
     ledger: Arc<RwLock<Ledger>>,
     action_tx: broadcast::Sender<ActionEvent>,
     fast_checktx: bool,
+    pending_txs: Arc<Mutex<Vec<VoteTx>>>,
+    committed_tx_count: Arc<AtomicU64>,
 }
 
 impl SpsAbciApp {
-    fn process_vote_bytes(&self, tx_data: &[u8]) -> Result<(), String> {
+    /// Decode bincode bytes (extremely fast compared to JSON)
+    fn decode_tx(&self, tx_data: &[u8]) -> Result<VoteTx, String> {
         if tx_data.is_empty() {
-            return Ok(());
+            return Err("Empty transaction".to_string());
         }
-
-        let vote: VoteTx = serde_json::from_slice(tx_data)
-            .map_err(|e| format!("JSON Decode Error: {}. Data: {}", e, hex::encode(tx_data)))?;
-
-        log::debug!("[ABCI] Processing Vote from agent: {}", vote.agent_id);
-
-        let mut ledger_guard = self.ledger.write().unwrap();
-        let action_opt =
-            ledger_guard.propose_new_values(&vote.agent_id, &vote.parameters, &vote.values);
-
-        if let Some(event) = action_opt {
-            log::info!("[ABCI] BFT CONSENSUS REACHED: triggering action {:?}", event);
-            let _ = self.action_tx.send(event);
-        }
-
-        Ok(())
-    }
-
-    /// Pure validation for CheckTx (no ledger locking)
-    fn validate_vote_bytes(&self, tx_data: &[u8]) -> Result<(), String> {
-        if tx_data.is_empty() {
-            return Ok(());
-        }
-        let _: VoteTx = serde_json::from_slice(tx_data)
-            .map_err(|e| format!("ABCI CheckTx Validation Failed: {}", e))?;
-        Ok(())
+        bincode::deserialize(tx_data)
+            .map_err(|e| format!("Bincode Decode Error: {}. Data len: {}", e, tx_data.len()))
     }
 }
 
 impl Info for SpsAbciApp {
     fn info(&self, _info_request: RequestInfo) -> ResponseInfo {
-        log::info!("[ABCI] Info requested -- connection healthy");
         ResponseInfo {
             data: "sps-node".to_string(),
             version: "0.1".to_string(),
@@ -74,31 +53,53 @@ impl Info for SpsAbciApp {
 
 impl Consensus for SpsAbciApp {
     fn init_chain(&self, _init_chain_request: RequestInitChain) -> ResponseInitChain {
-        log::info!("[ABCI] InitChain -- genesis state established");
         ResponseInitChain::default()
     }
 
-    fn begin_block(&self, begin_block_request: RequestBeginBlock) -> ResponseBeginBlock {
-        let height = begin_block_request
-            .header
-            .as_ref()
-            .map(|h| h.height)
-            .unwrap_or_default();
-        log::debug!("[ABCI] BeginBlock at height {}", height);
+    fn begin_block(&self, _begin_block_request: RequestBeginBlock) -> ResponseBeginBlock {
         ResponseBeginBlock::default()
     }
 
     fn deliver_tx(&self, deliver_tx_request: RequestDeliverTx) -> ResponseDeliverTx {
         let mut resp = ResponseDeliverTx::default();
-        if let Err(msg) = self.process_vote_bytes(&deliver_tx_request.tx) {
-            log::error!("[ABCI] {}", msg);
-            resp.code = 1;
-            resp.log = msg;
+        match self.decode_tx(&deliver_tx_request.tx) {
+            Ok(vote) => {
+                // Batching: Push to pending instead of locking ledger per-tx
+                let mut pending = self.pending_txs.lock().unwrap();
+                pending.push(vote);
+            }
+            Err(msg) => {
+                log::error!("[ABCI] {}", msg);
+                resp.code = 1;
+                resp.log = msg;
+            }
         }
         resp
     }
 
     fn end_block(&self, _end_block_request: RequestEndBlock) -> ResponseEndBlock {
+        let mut pending = self.pending_txs.lock().unwrap();
+        let tx_count_in_batch = pending.len() as u64;
+        
+        if tx_count_in_batch == 0 {
+            return ResponseEndBlock::default();
+        }
+
+        // Apply all transactions in one single write lock session
+        let mut ledger_guard = self.ledger.write().unwrap();
+        for vote in pending.drain(..) {
+            let action_opt = ledger_guard.propose_new_values(vote.agent_id, vote.param_mask, &vote.values);
+            if let Some(event) = action_opt {
+                log::info!("[ABCI] BFT CONSENSUS REACHED: triggering action {:?}", event);
+                let _ = self.action_tx.send(event);
+            }
+        }
+
+        // Update lock-free counter for API
+        let total_committed = self.committed_tx_count.fetch_add(tx_count_in_batch, Ordering::Relaxed) + tx_count_in_batch;
+        
+        log::info!("[ABCI] EndBlock processed {} txs. Total committed: {}", tx_count_in_batch, total_committed);
+
         ResponseEndBlock::default()
     }
 
@@ -113,8 +114,7 @@ impl Mempool for SpsAbciApp {
             return ResponseCheckTx::default();
         }
         let mut resp = ResponseCheckTx::default();
-        // Stateless validation to avoid write lock contention
-        if let Err(msg) = self.validate_vote_bytes(&check_tx_request.tx) {
+        if let Err(msg) = self.decode_tx(&check_tx_request.tx) {
             log::error!("[ABCI] CheckTx Failed: {}", msg);
             resp.code = 1;
             resp.log = msg;
@@ -151,13 +151,16 @@ async fn main() {
     ledger.dedup_disabled = cfg.ledger.disable_dedup;
     ledger.populate_action_map();
     let ledger = Arc::new(RwLock::new(ledger));
-
+    
+    let committed_tx_count = Arc::new(AtomicU64::new(0));
     let (action_tx, _) = broadcast::channel::<crate::types::ActionEvent>(100_000);
 
     let abci_app = SpsAbciApp {
         ledger: ledger.clone(),
         action_tx: action_tx.clone(),
         fast_checktx: true,
+        pending_txs: Arc::new(Mutex::new(Vec::with_capacity(10000))),
+        committed_tx_count: committed_tx_count.clone(),
     };
     
     let abci_addr: std::net::SocketAddr = "127.0.0.1:26658".parse().unwrap();
@@ -166,7 +169,7 @@ async fn main() {
     std::thread::Builder::new()
         .name("abci-server".to_string())
         .spawn(move || {
-            log::info!("[ABCI] Server starting on {} (v0.1 runtime)...", abci_addr);
+            log::info!("[ABCI] Server starting on {}...", abci_addr);
             let server = abci::sync_api::Server::new(
                 abci_app_clone.clone(),
                 abci_app_clone.clone(),
@@ -187,7 +190,7 @@ async fn main() {
         });
     }
 
-    // ── Start Bulletproof CometBFT Queue Worker with Exponential Backoff ──
+    // ── Optimized background CometBFT transaction queue processor ──
     let (tx_queue_tx, mut tx_queue_rx) = mpsc::channel::<VoteTx>(100_000);
     
     let comet_rpc_url = cfg.comet.rpc_url.clone();
@@ -199,31 +202,34 @@ async fn main() {
         
     tokio::spawn(async move {
         log::info!("[WORKER] Started background CometBFT transaction queue processor");
-        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(100));
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(200));
 
         while let Some(vote) = tx_queue_rx.recv().await {
-            if let Ok(tx_json) = serde_json::to_string(&vote) {
-                let tx_param = format!("\"{}\"", tx_json.replace('"', "\\\""));
+            // Use Bincode + Hex for transport to CometBFT
+            if let Ok(tx_bin) = bincode::serialize(&vote) {
+                let _tx_hex = hex::encode(&tx_bin); 
+                // Actually, the broadcast_tx RPC usually expects hex for the 'tx' parameter if not using JSON.
+                // But wait, the previous code used JSON and escaped quotes.
+                // Let's use hex for simplicity as it's safe.
+                let tx_hex = hex::encode(tx_bin);
                 let url = format!("{}/broadcast_tx_async", comet_rpc_url);
                 let client = worker_http_client.clone();
                 let permit = sem.clone().acquire_owned().await.unwrap();
 
                 tokio::spawn(async move {
-                    let mut backoff = 100; // ms
+                    let mut backoff = 50; // ms
                     loop {
-                        match client.get(&url).query(&[("tx", &tx_param)]).send().await {
+                        match client.get(&url).query(&[("tx", &format!("0x{}", tx_hex))]).send().await {
                             Ok(resp) => {
-                                let body = resp.text().await.unwrap_or_default();
-                                if body.contains("\"error\":") || body.contains("mempool is full") {
-                                    tokio::time::sleep(Duration::from_millis(backoff)).await;
-                                    backoff = std::cmp::min(backoff * 2, 2000); 
-                                } else {
-                                    break; 
+                                if resp.status().is_success() {
+                                    break;
                                 }
+                                tokio::time::sleep(Duration::from_millis(backoff)).await;
+                                backoff = std::cmp::min(backoff * 2, 1000); 
                             }
                             Err(_) => {
                                 tokio::time::sleep(Duration::from_millis(backoff)).await;
-                                backoff = std::cmp::min(backoff * 2, 2000);
+                                backoff = std::cmp::min(backoff * 2, 1000);
                             }
                         }
                     }
@@ -241,6 +247,7 @@ async fn main() {
         local_stats: Arc::new(RwLock::new(api::stats::LocalStats::default())),
         action_tx: action_tx.clone(),
         tx_queue: tx_queue_tx,
+        committed_tx_count,
     };
 
     let app = api::make_router(api_state);

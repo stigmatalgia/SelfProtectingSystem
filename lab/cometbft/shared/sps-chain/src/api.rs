@@ -31,7 +31,9 @@ pub struct ApiState {
     pub local_stats: Arc<RwLock<stats::LocalStats>>,
     pub action_tx: broadcast::Sender<ActionEvent>,
     pub tx_queue: mpsc::Sender<VoteTx>,
+    pub committed_tx_count: Arc<AtomicU64>,
 }
+
 
 pub mod stats {
     use super::*;
@@ -100,32 +102,38 @@ async fn handle_alert(
 
     if param_map.is_empty() { return StatusCode::OK; }
 
-    let mut parameters = Vec::new();
-    let mut values = Vec::new();
-    for (p, v) in param_map {
-        parameters.push(p);
-        values.push(v);
-    }
-
     let timestamp_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
 
     let seq_num = s.seq.fetch_add(1, Ordering::SeqCst);
+    
+    // Map agent_id string to u32 for the optimized VoteTx
+    let agent_id_u32 = u32::from_str_radix(&agent_id[..8], 16).unwrap_or(0);
+
+    // Build bitmask
+    let mut param_mask = 0u32;
+    let mut param_values = [0u64; 4];
+    for (i, &p) in ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"].iter().enumerate() {
+        if let Some(&v) = param_map.get(p) {
+            param_mask |= 1 << i;
+            param_values[i] = v;
+        }
+    }
 
     let vote = VoteTx {
-        id: format!("{}:{}", agent_id, seq_num),
-        agent_id: agent_id.clone(),
-        parameters,
-        values,
+        id: seq_num,
+        agent_id: agent_id_u32,
+        param_mask,
+        values: param_values,
         timestamp_ms,
     };
 
     match s.tx_queue.send(vote).await {
         Ok(_) => {
             let mut stats = s.local_stats.write().unwrap();
-            stats.processed += 1; // We count batches/transactions as processed units
+            stats.processed += 1;
             StatusCode::ACCEPTED
         },
         Err(e) => {
@@ -151,12 +159,23 @@ async fn handle_stress(
         .as_millis() as u64;
 
     let seq_num = s.seq.fetch_add(1, Ordering::SeqCst);
+    let agent_id_u32 = u32::from_str_radix(&s.node_id[..8], 16).unwrap_or(0);
+
+    let mut param_mask = 0u32;
+    let mut param_values = [0u64; 4];
+    let alert_type = alert.r#type.to_uppercase();
+    for (i, &p) in ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"].iter().enumerate() {
+        if p == alert_type {
+            param_mask |= 1 << i;
+            param_values[i] = alert.value;
+        }
+    }
 
     let vote = VoteTx {
-        id: format!("stress:{}:{}", s.node_id, seq_num),
-        agent_id: s.node_id.clone(),
-        parameters,
-        values,
+        id: seq_num,
+        agent_id: agent_id_u32,
+        param_mask,
+        values: param_values,
         timestamp_ms,
     };
 
@@ -184,15 +203,17 @@ async fn handle_stats(State(s): State<ApiState>) -> impl IntoResponse {
 }
 
 async fn handle_tx_count(State(s): State<ApiState>) -> impl IntoResponse {
-    let ledger = s.ledger.read().unwrap();
-    Json(TxCount { count: ledger.tx_count() })
+    let count = s.committed_tx_count.load(Ordering::Relaxed);
+    Json(TxCount { count })
 }
+
 
 async fn handle_alive(State(s): State<ApiState>) -> impl IntoResponse {
     Json(crate::types::AliveResponse {
         status: "alive".to_string(),
-        node_id: s.node_id.clone(),
+        id: s.node_id.clone(),
         role: s.role.clone(),
+        account: "".to_string(), // Add dummy account field
     })
 }
 

@@ -554,7 +554,7 @@ def main():
     parser.add_argument("lab_dir",
                         help="Path to the Kathara lab directory")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[100, 500, 1000, 5000, 10000, 20000, 50000, 75000, 100000],
+                        default=[50000],
                         help="Burst sizes N to benchmark.")
     parser.add_argument("--concurrency", type=int,
                         default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "64")),
