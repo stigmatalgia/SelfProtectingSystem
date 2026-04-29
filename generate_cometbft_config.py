@@ -117,34 +117,41 @@ def build_comet_config(peers: list[str]) -> str:
 
 [rpc]
 laddr = "tcp://0.0.0.0:26657"
+max_open_connections = 4096
+max_body_bytes = 10000000
 
 [p2p]
 laddr = "tcp://0.0.0.0:26656"
 persistent_peers = "{peers_str}"
 addr_book_strict = false
 allow_duplicate_ip = true
+flush_throttle_timeout = "10ms"
+send_rate = 20971520
+recv_rate = 20971520
+max_num_inbound_peers = 80
+max_num_outbound_peers = 40
 
 [mempool]
 size = 50000
-cache_size = 50000
-max_txs_bytes = 1073741824
+cache_size = 100
+max_txs_bytes = 268435456
+max_tx_bytes = 65536
 recheck = false
 
 [consensus]
-timeout_propose = "300ms"
-timeout_propose_delta = "100ms"
-timeout_prevote = "200ms"
+timeout_propose = "800ms"
+timeout_propose_delta = "200ms"
+timeout_prevote = "300ms"
 timeout_prevote_delta = "100ms"
-timeout_precommit = "200ms"
+timeout_precommit = "300ms"
 timeout_precommit_delta = "100ms"
-timeout_commit = "500ms"
+timeout_commit = "1200ms"
 
-skip_timeout_commit = true
-peer_gossip_sleep_duration = "10ms"
+skip_timeout_commit = false
+peer_gossip_sleep_duration = "30ms"
 
-# FIX: Force an empty block every 1 second to prevent the consensus engine from 
-# stalling edge-case transactions in the mempool
-create_empty_blocks = false
+create_empty_blocks = true
+create_empty_blocks_interval = "250ms"
 """
 
 def json_list(items: list[str]) -> str:
@@ -204,7 +211,7 @@ def generate_all():
         "chain_id": "sps-chain-1",
         "initial_height": "1",
         "consensus_params": {
-            "block": {"max_bytes": "22020096", "max_gas": "-1", "time_iota_ms": "1000"},
+            "block": {"max_bytes": "67108864", "max_gas": "-1", "time_iota_ms": "1000"},
             "evidence": {"max_age_num_blocks": "100000", "max_age_duration": "172800000000000", "max_bytes": "1048576"},
             "validator": {"pub_key_types": ["ed25519"]},
             "version": {}

@@ -22,6 +22,7 @@ use abci::types::{
 struct SpsAbciApp {
     ledger: Arc<RwLock<Ledger>>,
     action_tx: broadcast::Sender<ActionEvent>,
+    fast_checktx: bool,
 }
 
 impl SpsAbciApp {
@@ -30,9 +31,8 @@ impl SpsAbciApp {
             return Ok(());
         }
 
-        let tx_hex = hex::encode(tx_data);
         let vote: VoteTx = serde_json::from_slice(tx_data)
-            .map_err(|e| format!("JSON Decode Error: {}. Data: {}", e, tx_hex))?;
+            .map_err(|e| format!("JSON Decode Error: {}. Data: {}", e, hex::encode(tx_data)))?;
 
         log::debug!("[ABCI] Processing Vote from agent: {}", vote.agent_id);
 
@@ -84,7 +84,7 @@ impl Consensus for SpsAbciApp {
             .as_ref()
             .map(|h| h.height)
             .unwrap_or_default();
-        log::info!("[ABCI] BeginBlock at height {}", height);
+        log::debug!("[ABCI] BeginBlock at height {}", height);
         ResponseBeginBlock::default()
     }
 
@@ -109,6 +109,9 @@ impl Consensus for SpsAbciApp {
 
 impl Mempool for SpsAbciApp {
     fn check_tx(&self, check_tx_request: RequestCheckTx) -> ResponseCheckTx {
+        if self.fast_checktx {
+            return ResponseCheckTx::default();
+        }
         let mut resp = ResponseCheckTx::default();
         // Stateless validation to avoid write lock contention
         if let Err(msg) = self.validate_vote_bytes(&check_tx_request.tx) {
@@ -125,7 +128,7 @@ impl Snapshot for SpsAbciApp {}
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info")
+        env_logger::Env::default().default_filter_or("warn")
     ).init();
 
     let config_path = std::env::args()
@@ -154,6 +157,7 @@ async fn main() {
     let abci_app = SpsAbciApp {
         ledger: ledger.clone(),
         action_tx: action_tx.clone(),
+        fast_checktx: true,
     };
     
     let abci_addr: std::net::SocketAddr = "127.0.0.1:26658".parse().unwrap();

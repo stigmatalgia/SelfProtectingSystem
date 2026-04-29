@@ -99,7 +99,7 @@ capacity:
 
 blockchain-benchmark:
 	@echo "Running native P2P blockchain benchmark for $(LAB_TYPE)..."
-	cd benchmark && $(ENV_VARS) ../.venv/bin/python blockchain_benchmark.py ../$(BASE_DIR)
+	cd benchmark && $(ENV_VARS) ../.venv/bin/python blockchain_benchmark.py ../$(BASE_DIR) --concurrency 16 --sleep-ms 5
 
 # ── Pre-compile sps-bench (native P2P injector) ───────────────────────────
 # Produces a musl static binary that blockchain_benchmark.py copies into

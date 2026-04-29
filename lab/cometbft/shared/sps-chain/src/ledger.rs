@@ -1,7 +1,6 @@
 /// IDS voting state machine — pure Rust reimplementation of IDS.sol.
 /// Thread-safe via caller-held lock (the struct itself is not Sync).
 use std::collections::HashMap;
-use std::path::Path;
 use sha2::{Sha256, Digest};
 use crate::types::ActionEvent;
 
@@ -11,7 +10,6 @@ struct ParamStatus {
     current_value: u64,
     agent_proposed: HashMap<String, u64>, // agent_id -> proposed value
     vote_count: HashMap<u64, usize>,      // value -> number of votes
-    has_voted: HashMap<String, bool>,     // agent_id -> has ever voted
 }
 
 pub struct Ledger {
@@ -92,6 +90,7 @@ impl Ledger {
         let dedup_disabled = self.dedup_disabled;
         let mut changed = false;
         let mut has_effective_vote = false;
+        let threshold = self.agents_count / 2;
 
         for (param, &new_value) in parameters.iter().zip(values.iter()) {
             let status = match self.status_map.get_mut(param.as_str()) {
@@ -112,8 +111,6 @@ impl Ledger {
                         *count -= 1;
                     }
                 }
-            } else {
-                status.has_voted.insert(agent_id.to_string(), true);
             }
 
             // Record the new vote and increment its count
@@ -123,7 +120,6 @@ impl Ledger {
             has_effective_vote = true;
 
             let votes = *status.vote_count.get(&new_value).unwrap();
-            let threshold = self.agents_count / 2;
             
             log::debug!("[LEDGER] {} check | Value: {} | Votes: {} | Threshold: {}", param, new_value, votes, threshold);
 
@@ -144,10 +140,14 @@ impl Ledger {
         self.committed_txs += 1;
 
         if changed {
-            // Build binary state string from parameter values
-            let state_str: String = self.parameters.iter()
-                .map(|p| self.status_map[p].current_value.to_string())
-                .collect();
+            let mut state_str = String::with_capacity(self.parameters.len());
+            for p in &self.parameters {
+                if self.status_map[p].current_value == 0 {
+                    state_str.push('0');
+                } else {
+                    state_str.push('1');
+                }
+            }
             let hash = hex::encode(Sha256::digest(state_str.as_bytes()));
 
             if let Some(action) = self.state_action.get(&hash) {

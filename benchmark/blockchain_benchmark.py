@@ -23,7 +23,7 @@ COMET_AGENTS   = ["light0", "light1", "light2"]
 COMET_BENCH_NODE   = "light0"          # exec target: sps-bench runs here
 COMET_P2P_TARGET   = "127.0.0.1:26656" # loopback P2P port (node's own listener)
 COMET_API_TARGET   = "127.0.0.1:3000"  # loopback sps-node API
-COMET_RPC_TARGETS  = ["10.99.0.1:26657"]
+COMET_RPC_TARGETS  = ["10.99.0.11:26657","10.99.0.12:26657","10.99.0.13:26657"]
 COMET_P2P_PORT     = 26656
 COMET_API_PORT     = 26657
 
@@ -380,12 +380,14 @@ def wait_for_comet_completion(
     n: int,
     timeout_s: int = 600,
     poll_s: float = 2.0,
+    stable_ticks: int = 5, # 5 tick da 2 secondi = 10 secondi di stabilità
 ) -> tuple[float | None, dict | None]:
     
     deadline = time.time() + timeout_s
-    last_metrics = None
-    zero_count = 0
+    last_total_txs = -1
+    stable_count = 0
     polls = 0
+    last_metrics = None
 
     while time.time() < deadline:
         metrics = get_comet_rpc_metrics(lab_dir, COMET_BENCH_NODE)
@@ -393,18 +395,20 @@ def wait_for_comet_completion(
         
         if metrics is not None:
             last_metrics = metrics
+            current_txs = metrics["total_txs"]
             
-            # Stampa lo stato ogni 5 cicli (10 secondi) per evitare l'ansia da blocco silenzioso
             if polls % 5 == 0:
-                print(f"  [wait] Mempool unconfirmed_txs = {metrics['unconfirmed_txs']} (Total txs on chain: {metrics['total_txs']})")
+                print(f"  [wait] Mempool unconfirmed_txs = {metrics['unconfirmed_txs']} (Total txs on chain: {current_txs})")
             
-            # Criterio di fine: la mempool è vuota per 2 controlli di fila. Non ci interessa se mancano txs all'appello.
-            if metrics["unconfirmed_txs"] == 0:
-                zero_count += 1
-                if zero_count >= 2:
+            # NUOVA CONDIZIONE: Quiescenza su total_txs
+            if current_txs == last_total_txs:
+                stable_count += 1
+                if stable_count >= stable_ticks:
+                    print(f"  [wait] Chain quiescent. Blocks stopped growing at {current_txs} txs.")
                     return time.time(), metrics
             else:
-                zero_count = 0
+                stable_count = 0
+                last_total_txs = current_txs
         else:
             if polls % 5 == 0:
                 print("  [wait] Attenzione: Impossibile contattare CometBFT RPC (Nodo molto sotto sforzo, attendo...)")
@@ -412,7 +416,7 @@ def wait_for_comet_completion(
         time.sleep(poll_s)
 
     return None, last_metrics
-    
+
 _BENCH_STATS_RE = re.compile(r"BENCH_STATS:(\{.*\})")
 
 
@@ -433,6 +437,7 @@ def run_cometbft_bench(
     n: int,
     step: int,
     concurrency: int,
+    sleep_ms: int,
     targets: list[str],
 ) -> dict | None:
     """
@@ -444,9 +449,10 @@ def run_cometbft_bench(
         f"sps-bench --n {n} "
         f"--targets {targets_arg} "
         f"--concurrency {concurrency} "
+        f"--sleep-ms {sleep_ms} "
         f"--step {step} "
         f"|| /shared/sps-bench --n {n} --targets {targets_arg} "
-        f"--concurrency {concurrency} --step {step}"
+        f"--concurrency {concurrency} --sleep-ms {sleep_ms} --step {step}"
     )
     inner = f"bash -c '{cmd_str}'"
     print(f"  Executing: {inner}")
@@ -551,8 +557,11 @@ def main():
                         default=[100, 500, 1000, 5000, 10000, 20000, 50000, 75000, 100000],
                         help="Burst sizes N to benchmark.")
     parser.add_argument("--concurrency", type=int,
-                        default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "16")),
+                        default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "64")),
                         help="Parallel WebSocket send workers used by sps-bench (CometBFT only).")
+    parser.add_argument("--sleep-ms", type=int,
+                        default=int(os.environ.get("COMET_BENCH_SLEEP_MS", "0")),
+                        help="Per-frame sender pacing in ms (CometBFT only, default 0 for max throughput).")
     parser.add_argument("--comet-rpc-targets", type=str,
                         default=os.environ.get("COMET_RPC_TARGETS", ",".join(COMET_RPC_TARGETS)),
                         help="Comma-separated CometBFT RPC targets for direct WebSocket injection.")
@@ -570,6 +579,7 @@ def main():
     print(f"  Lab directory : {args.lab_dir}")
     print(f"  Burst steps   : {args.steps}")
     print(f"  Concurrency   : {args.concurrency}  (CometBFT only)")
+    print(f"  Sleep ms      : {args.sleep_ms}  (CometBFT only)")
     print(f"  RPC targets   : {args.comet_rpc_targets}  (CometBFT only)")
     print(f"  Results dir   : {res_dir}/")
     print(f"{'=' * 60}\n")
@@ -624,6 +634,7 @@ def main():
                     n,
                     step=step_idx,
                     concurrency=args.concurrency,
+                    sleep_ms=args.sleep_ms,
                     targets=rpc_targets,
                 )
                 completion_ts, completion_metrics = wait_for_comet_completion(

@@ -37,6 +37,7 @@ struct Config {
     n: usize,
     concurrency: usize,
     step: usize,
+    sleep_ms: u64,
     targets: Vec<String>,
 }
 
@@ -45,6 +46,7 @@ fn parse_args() -> Config {
     let mut n = 0usize;
     let mut concurrency = 64usize;
     let mut step = 0usize;
+    let mut sleep_ms = 0u64;
     let mut targets =
         "validator0:26657,validator1:26657,validator2:26657".to_string();
 
@@ -62,6 +64,10 @@ fn parse_args() -> Config {
             "--step" | "-s" => {
                 i += 1;
                 step = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(0);
+            }
+            "--sleep-ms" => {
+                i += 1;
+                sleep_ms = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(0);
             }
             "--targets" => {
                 i += 1;
@@ -83,6 +89,7 @@ fn parse_args() -> Config {
         n,
         concurrency,
         step,
+        sleep_ms,
         targets: parsed_targets,
     }
 }
@@ -150,6 +157,7 @@ async fn main() {
         let all_frames = frames.clone();
         let errs = send_errors.clone();
         let sent = sent_ok.clone();
+        let sleep_ms = cfg.sleep_ms;
 
 handles.push(tokio::spawn(async move {
             let ws = match open_ws(&target).await {
@@ -161,17 +169,17 @@ handles.push(tokio::spawn(async move {
                 }
             };
 
-            // 1. SDOPPIAMO IL WEBSOCKET IN SCRITTURA E LETTURA
+            if let MaybeTlsStream::Plain(tcp) = ws.get_ref() {
+                let _ = tcp.set_nodelay(true);
+            }
+
             let (mut write, mut read) = ws.split();
 
-            // 2. CREIAMO UN TASK BACKGROUND PER SVUOTARE IL BUFFER TCP
             tokio::spawn(async move {
                 while let Some(_) = read.next().await {
-                    // Ignoriamo la risposta, vogliamo solo svuotare il buffer
                 }
             });
 
-            // 3. INVIAMO ALLA MASSIMA VELOCITÀ SUL CANALE DI SCRITTURA
             for idx in (worker_id..all_frames.len()).step_by(workers) {
                 if write
                     .send(Message::Text(all_frames[idx].clone().into()))
@@ -181,6 +189,9 @@ handles.push(tokio::spawn(async move {
                     sent.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 } else {
                     errs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                if sleep_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
                 }
             }
 
