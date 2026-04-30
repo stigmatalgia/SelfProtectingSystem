@@ -127,20 +127,18 @@ def reset_system_state(lab_dir):
     nodes = ["light0", "light1", "light2"] if lab_type == "cometbft" else ["member0", "member1", "member2"]
 
     if lab_type == "cometbft":
-        # In benchmark mode /alert ignores value=0 updates; use /stress to force
-        # per-node state back to 0 so next step dedup starts from a clean baseline.
-        reset_types = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"]
-        for node in nodes:
-            for alert_type in reset_types:
-                payload = json.dumps({"type": alert_type, "value": 0})
-                try:
-                    run_cmd(
-                        f"kathara exec -d {lab_dir} {node} -- "
-                        f"curl -s -X POST -H 'Content-Type: application/json' "
-                        f"-d '{payload}' http://localhost:3000/stress"
-                    )
-                except Exception as e:
-                    print(f"Warning: Failed to reset node {node}/{alert_type}: {e}")
+        # Send a SAFE_ENVIRONMENT alert to reset the state and clear API dedup cache for each IDS.
+        agent_names = ["snort", "suricata", "zeek"]
+        for node, agent in zip(nodes, agent_names):
+            payload = json.dumps([{"ids": agent, "type": "SAFE_ENVIRONMENT", "value": 1}])
+            try:
+                run_cmd(
+                    f"kathara exec -d {lab_dir} {node} -- "
+                    f"curl -s -X POST -H 'Content-Type: application/json' "
+                    f"-d '{payload}' http://localhost:3000/alert"
+                )
+            except Exception as e:
+                print(f"Warning: Failed to reset node {node}: {e}")
     else:
         payload = json.dumps({"type": "SAFE_ENVIRONMENT", "value": 1})
         for node in nodes:
@@ -208,9 +206,10 @@ def main():
     ids_count = len(nodes)
     attack_types_per_step = 4
     if benchmark_mode_enabled:
+        # User expects 3*4=12 transactions; this requires suppressing automatic recovery 
+        # alerts which would otherwise reset the deduplication cache and allow more transactions.
         set_benchmark_mode(args.lab_dir, True)
-        # For capacity benchmark, keep per-IDS step-level votes and avoid global state collapse.
-        set_ledger_dedup_override(args.lab_dir, True)
+        set_ledger_dedup_override(args.lab_dir, False) # enabled=true
 
     try:
         for n in args.steps:
@@ -280,7 +279,11 @@ def main():
             if benchmark_mode_enabled:
                 expected_sensitive = ids_count * min(attack_types_per_step, n)
             
-            print(f"Results for N={n}: Sent={n}, IDs={diff_ids}, API_Recv={diff_recv}, API_Sens={diff_proc}, Tx={diff_tx}")
+            # Ingress: Sum of alerts received by all nodes (total load)
+            # Detected: Max alerts found by a single IDS
+            # Sensitive: Alerts that passed the API-level deduplication
+            # Transactions: Final transactions committed on the blockchain
+            print(f"Results for N={n}: Sent={n}, Detected={diff_ids}, Ingress={diff_recv}, Sensitive={diff_proc}, Transactions={diff_tx}")
             results.append({
                 "N": n,
                 "Sent": n,

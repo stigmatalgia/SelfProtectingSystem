@@ -126,7 +126,7 @@ Results are saved as JSON data and PNG charts within the `benchmark/result/<lab_
 
 3. **Build the docker images and start the simulation:**
    ```bash
-   #BEWARE, THE STARTUP CAN TAKE UP TO 1/2 MINUTES
+   #BEWARE, THE STARTUP CAN TAKE UP TO 1/2 MINUTES, IF A COMMAND IS FAILING USE SUDO
    
    # To start the Quorum environment (Default)
    make quorum setup
@@ -141,22 +141,19 @@ Results are saved as JSON data and PNG charts within the `benchmark/result/<lab_
    ```
 
 4. **Run the Benchmark Suite:**
-   You can easily run the entire suite of benchmarks on both Quorum and CometBFT sequentially using a single command. This will automatically setup, benchmark, and clean the environments, and finally generate all comparative performance charts in the `benchmark/result/` folder:
-   ```bash
-   make all-benchmarks
-   ```
-
    *Alternatively, you can run individual benchmark commands on a running lab:*
    ```bash
    
    # Generate sequential attack boxplot data (e.g., 10 attacks)
-   make <quorum|cometbft> chart N=10
+   make <quorum|cometbft> chart N=100
    
    # Run system capacity and throughput test
    make <quorum|cometbft> capacity
    
    # Run native blockchain transaction test
    make <quorum|cometbft> blockchain-benchmark
+
+   # it is preferred to restart the lab after each benchmark run but it is not mandatory.
    ```
 
 **EXTRA, Testing commands!**

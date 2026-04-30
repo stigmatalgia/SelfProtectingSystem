@@ -41,7 +41,7 @@ pub mod stats {
     pub struct LocalStats {
         pub received: u64,
         pub processed: u64,
-        pub last_voted: HashMap<String, u64>,
+        pub last_voted: HashMap<String, String>,
     }
 }
 
@@ -69,23 +69,19 @@ async fn handle_alert(
     State(s): State<ApiState>,
     Json(alerts): Json<Vec<IncomingAlert>>,
 ) -> impl IntoResponse {
-    if std::path::Path::new("/shared/disable_negative_alerts").exists() {
-        return StatusCode::OK;
-    }
     if alerts.is_empty() { return StatusCode::OK; }
     
     let agent_id = alerts[0].ids.clone();
     log::info!("[API] Received batch of {} alerts from agent {}", alerts.len(), agent_id);
 
     {
-        let mut stats = s.local_stats.write().unwrap();
-        stats.received += alerts.len() as u64;
+        // Moved stats increment down to handle_alert body for unified lock management
     }
 
     let mut param_map: HashMap<String, u64> = HashMap::new();
     let mut is_safe_env = false;
 
-    for alert in alerts {
+    for alert in &alerts {
         let alert_type = alert.r#type.to_uppercase();
         if alert_type == "SAFE_ENVIRONMENT" {
             is_safe_env = true;
@@ -142,6 +138,30 @@ async fn handle_alert(
         timestamp_ms,
     };
 
+    // API-level Deduplication
+    {
+        let mut stats = s.local_stats.write().unwrap();
+        stats.received += alerts.len() as u64;
+
+        let ledger_guard = s.ledger.read().unwrap();
+        if !ledger_guard.dedup_disabled {
+            if is_safe_env {
+                // Clearing cache for this agent on SAFE_ENVIRONMENT reset
+                stats.last_voted.remove(&agent_id);
+            } else {
+                // Normalize values to 0/1 for the state key to avoid "leaks" when 
+                // batch sizes or alert counts vary (intensity doesn't change state type).
+                let normalized_values = param_values.map(|v| if v > 0 { 1 } else { 0 });
+                let state_key = format!("{:x}-{:?}", param_mask, normalized_values);
+                
+                if stats.last_voted.get(&agent_id).map(|s| s.as_str()) == Some(state_key.as_str()) {
+                    log::info!("[API] Dropping duplicate alert from agent {}: key={}", agent_id, state_key);
+                    return StatusCode::OK;
+                }
+                stats.last_voted.insert(agent_id, state_key);
+            }
+        }
+    }
     match s.tx_queue.send(vote).await {
         Ok(_) => {
             let mut stats = s.local_stats.write().unwrap();
