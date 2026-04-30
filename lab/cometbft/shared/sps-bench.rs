@@ -203,7 +203,7 @@ handles.push(tokio::spawn(async move {
         let _ = h.await;
     }
     let sent_time = send_start.elapsed().as_secs_f64();
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     let stats = BenchStats {
         n: cfg.n,
         sent: sent_ok.load(std::sync::atomic::Ordering::Relaxed),

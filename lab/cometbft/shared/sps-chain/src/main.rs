@@ -24,7 +24,6 @@ struct SpsAbciApp {
     ledger: Arc<RwLock<Ledger>>,
     action_tx: broadcast::Sender<ActionEvent>,
     fast_checktx: bool,
-    pending_txs: Arc<Mutex<Vec<VoteTx>>>,
     committed_tx_count: Arc<AtomicU64>,
 }
 
@@ -64,9 +63,17 @@ impl Consensus for SpsAbciApp {
         let mut resp = ResponseDeliverTx::default();
         match self.decode_tx(&deliver_tx_request.tx) {
             Ok(vote) => {
-                // Batching: Push to pending instead of locking ledger per-tx
-                let mut pending = self.pending_txs.lock().unwrap();
-                pending.push(vote);
+                let action_opt = {
+                    let mut ledger_guard = self.ledger.write().unwrap();
+                    ledger_guard.propose_new_values(vote.agent_id, vote.param_mask, &vote.values)
+                };
+                
+                if let Some(event) = action_opt {
+                    log::info!("[ABCI] EVENT-DRIVEN CONSENSUS REACHED: triggering action {:?}", event);
+                    let _ = self.action_tx.send(event);
+                }
+                
+                self.committed_tx_count.fetch_add(1, Ordering::Relaxed);
             }
             Err(msg) => {
                 log::error!("[ABCI] {}", msg);
@@ -78,28 +85,6 @@ impl Consensus for SpsAbciApp {
     }
 
     fn end_block(&self, _end_block_request: RequestEndBlock) -> ResponseEndBlock {
-        let mut pending = self.pending_txs.lock().unwrap();
-        let tx_count_in_batch = pending.len() as u64;
-        
-        if tx_count_in_batch == 0 {
-            return ResponseEndBlock::default();
-        }
-
-        // Apply all transactions in one single write lock session
-        let mut ledger_guard = self.ledger.write().unwrap();
-        for vote in pending.drain(..) {
-            let action_opt = ledger_guard.propose_new_values(vote.agent_id, vote.param_mask, &vote.values);
-            if let Some(event) = action_opt {
-                log::info!("[ABCI] BFT CONSENSUS REACHED: triggering action {:?}", event);
-                let _ = self.action_tx.send(event);
-            }
-        }
-
-        // Update lock-free counter for API
-        let total_committed = self.committed_tx_count.fetch_add(tx_count_in_batch, Ordering::Relaxed) + tx_count_in_batch;
-        
-        log::info!("[ABCI] EndBlock processed {} txs. Total committed: {}", tx_count_in_batch, total_committed);
-
         ResponseEndBlock::default()
     }
 
@@ -159,7 +144,6 @@ async fn main() {
         ledger: ledger.clone(),
         action_tx: action_tx.clone(),
         fast_checktx: true,
-        pending_txs: Arc::new(Mutex::new(Vec::with_capacity(10000))),
         committed_tx_count: committed_tx_count.clone(),
     };
     
@@ -186,6 +170,7 @@ async fn main() {
         let rx = action_tx.subscribe();
         let url = cfg.actuator.url.clone();
         tokio::spawn(async move {
+            log::info!("[FWD] Forwarder monitoring /shared/disable_feedback...");
             forwarder::run_forwarder(rx, url).await;
         });
     }

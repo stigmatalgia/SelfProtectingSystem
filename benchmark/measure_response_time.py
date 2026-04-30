@@ -57,7 +57,7 @@ def parse_ids_time(cmd, regex, time_fmts, since):
 
 def get_zeek_time(lab_dir, since):
     """Estrae i timestamp UNIX dai log di Zeek."""
-    out = run_cmd(f"kathara exec -d {lab_dir} ids_zeek -- cat /var/log/zeek/signatures.log")
+    out = run_cmd(f"kathara exec -d {lab_dir} ids_zeek -- tail -n 1000 /var/log/zeek/signatures.log")
     timestamps = []
     for line in out.strip().split('\n'):
         if line.startswith('#') or not line.strip(): continue
@@ -73,7 +73,7 @@ def get_zeek_time(lab_dir, since):
 
 def get_actuator_time(lab_dir, since):
     """Estrae i timestamp in cui l'actuator ha ricevuto l'azione di mitigazione."""
-    out = run_cmd(f"kathara exec -d {lab_dir} actuator -- cat /var/log/actuator_actions.log")
+    out = run_cmd(f"kathara exec -d {lab_dir} actuator -- tail -n 1000 /var/log/actuator_actions.log")
     timestamps = []
     for line in out.strip().split('\n'):
         if "RECEIVED action:" in line:
@@ -96,12 +96,12 @@ def main():
     args = parser.parse_args()
 
     snort_ts = parse_ids_time(
-        f"kathara exec -d {args.lab_dir} ids_snort -- cat /var/log/snort/alert_fast.txt", 
+        f"kathara exec -d {args.lab_dir} ids_snort -- tail -n 1000 /var/log/snort/alert_fast.txt", 
         r'^(\d{2,4}/\d{2}/\d{2}-\d{2}:\d{2}:\d{2}(?:\.\d+)?)', 
         ["%Y/%m/%d-%H:%M:%S.%f", "%y/%m/%d-%H:%M:%S.%f", "%Y/%m/%d-%H:%M:%S", "%y/%m/%d-%H:%M:%S"], args.since
     )
     suricata_ts = parse_ids_time(
-        f"kathara exec -d {args.lab_dir} ids_suricata -- cat /var/log/suricata/fast.log",
+        f"kathara exec -d {args.lab_dir} ids_suricata -- tail -n 1000 /var/log/suricata/fast.log",
         r'^(\d{2}/\d{2}/\d{4}-\d{2}:\d{2}:\d{2}(?:\.\d+)?)', 
         ["%m/%d/%Y-%H:%M:%S.%f", "%m/%d/%Y-%H:%M:%S"], args.since
     )

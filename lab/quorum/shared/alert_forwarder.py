@@ -65,7 +65,7 @@ def forwarder_worker(worker_id):
         
         success = False
         retries = 3
-        while not success and retries > 0:
+        while not success and retries > 0 or False:
             try:
                 # Usiamo Keep-Alive per non chiudere il socket
                 headers = {'Content-Type': 'application/json', 'Connection': 'keep-alive'}
@@ -101,7 +101,6 @@ def main():
     while not os.path.exists(LOG_FILE):
         time.sleep(1)
 
-    # Avviamo 10 worker (sufficienti visto che ora inviamo in batch da 100)
     for i in range(10):
         t = threading.Thread(target=forwarder_worker, args=(i,), daemon=True)
         t.start()

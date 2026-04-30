@@ -80,7 +80,7 @@ def main():
             
             measure_script = SCRIPT_DIR / "measure_response_time.py"
             cmd = f"{sys.executable} {measure_script} {args.lab_dir} --since {start_ts}"
-            out = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            out = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
             
             m = re.search(r'Delta:\s*([0-9\.]+)s', out.stdout)
             if m:

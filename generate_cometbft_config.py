@@ -135,22 +135,25 @@ max_num_outbound_peers = 40
 size = 50000
 cache_size = 20000
 max_txs_bytes = 2684354560
-max_tx_bytes = 268435456
+max_tx_bytes = 262144
 recheck = false
-
 [consensus]
-timeout_propose = "10000ms"
-timeout_propose_delta = "100ms"
-timeout_prevote = "30ms"
-timeout_prevote_delta = "50000ms"
-timeout_precommit = "300ms"
-timeout_precommit_delta = "100ms"
-timeout_commit = "10000ms"
+# Limiti di "pazienza" alti: se la rete è lenta sotto sforzo, i nodi aspettano senza fallire.
+# Se la rete è veloce, voteranno istantaneamente in pochi millisecondi.
+timeout_propose = "2s"
+timeout_propose_delta = "200ms"
+timeout_prevote = "2s"
+timeout_prevote_delta = "200ms"
+timeout_precommit = "2s"
+timeout_precommit_delta = "200ms"
+
+# ZERO PAUSE: Non appena il blocco è approvato, passa subito al successivo.
+timeout_commit = "50ms"
 
 skip_timeout_commit = true
-peer_gossip_sleep_duration = "10ms"
+peer_gossip_sleep_duration = "50ms"
 
-create_empty_blocks = true
+create_empty_blocks = false
 create_empty_blocks_interval = "500ms"
 """
 
@@ -205,14 +208,14 @@ def generate_all():
             })
         log.info("  Node %-12s → id=%s", name, n_id)
 
-    # 2. Build Genesis Template
+# 2. Build Genesis Template
     genesis = {
         "genesis_time": "2026-01-01T00:00:00Z",
         "chain_id": "sps-chain-1",
         "initial_height": "1",
         "consensus_params": {
-            "block": {"max_bytes": "67108864", "max_gas": "-1", "time_iota_ms": "1000"},
-            "evidence": {"max_age_num_blocks": "100000", "max_age_duration": "172800000000000", "max_bytes": "1048576"},
+            "block": {"max_bytes": "524288", "max_gas": "-1", "time_iota_ms": "1000"},
+            "evidence": {"max_age_num_blocks": "100000", "max_age_duration": "172800000000000", "max_bytes": "524288"},
             "validator": {"pub_key_types": ["ed25519"]},
             "version": {}
         },

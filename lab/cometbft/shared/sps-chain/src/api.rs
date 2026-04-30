@@ -69,6 +69,9 @@ async fn handle_alert(
     State(s): State<ApiState>,
     Json(alerts): Json<Vec<IncomingAlert>>,
 ) -> impl IntoResponse {
+    if std::path::Path::new("/shared/disable_negative_alerts").exists() {
+        return StatusCode::OK;
+    }
     if alerts.is_empty() { return StatusCode::OK; }
     
     let agent_id = alerts[0].ids.clone();
@@ -110,7 +113,16 @@ async fn handle_alert(
     let seq_num = s.seq.fetch_add(1, Ordering::SeqCst);
     
     // Map agent_id string to u32 for the optimized VoteTx
-    let agent_id_u32 = u32::from_str_radix(&agent_id[..8], 16).unwrap_or(0);
+    let agent_id_u32 = if agent_id.len() >= 8 && agent_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        u32::from_str_radix(&agent_id[..8], 16).unwrap_or(0)
+    } else {
+        // Simple hash for string-based IDs like "snort", "suricata", "zeek"
+        let mut h = 0u32;
+        for (i, b) in agent_id.as_bytes().iter().enumerate() {
+            h = h.wrapping_add((*b as u32).wrapping_shl(i as u32 % 4));
+        }
+        h
+    };
 
     // Build bitmask
     let mut param_mask = 0u32;

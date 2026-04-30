@@ -23,7 +23,7 @@ COMET_AGENTS   = ["light0", "light1", "light2"]
 COMET_BENCH_NODE   = "light0"          # exec target: sps-bench runs here
 COMET_P2P_TARGET   = "127.0.0.1:26656" # loopback P2P port (node's own listener)
 COMET_API_TARGET   = "127.0.0.1:3000"  # loopback sps-node API
-COMET_RPC_TARGETS  = ["10.99.0.11:26657","10.99.0.12:26657","10.99.0.13:26657"]
+COMET_RPC_TARGETS  = ["10.99.0.11:26657"]
 COMET_P2P_PORT     = 26656
 COMET_API_PORT     = 26657
 
@@ -113,6 +113,7 @@ def set_raw_throughput_mode(lab_dir: str, enabled: bool):
             kathara_exec(lab_dir, node, f"curl -s -X POST 'http://127.0.0.1:3000/config/dedup?enabled={enabled_str}'")
         except Exception as e:
             print(f"  [warn] Failed to set dedup on {node}: {e}")
+
 def _try_build_host(bench_src_dir: str) -> str | None:
     """
     Attempt to build sps-bench on the host with musl target.
@@ -173,7 +174,7 @@ def prepare_sps_bench(lab_dir: str) -> bool:
     
     Priority:
       1. /usr/local/bin/sps-bench inside container (baked into image)
-            2. lab/cometbft/shared/sps-bench/sps-bench on host (synced to /shared/sps-bench)
+      2. lab/cometbft/shared/sps-bench/sps-bench on host (synced to /shared/sps-bench)
       3. /shared/sps-bench (synced previously)
     """
     print("\n[prepare] Checking sps-bench availability…")
@@ -290,17 +291,15 @@ def get_node_tx_count(lab_dir: str, node: str, lab_type: str) -> int:
 def wait_for_tx_quiescence(
     lab_dir: str,
     lab_type: str,
-    max_wait_s: int = 10,
+    max_wait_s: int = 120,
     poll_s: float = 1.0,
-    stable_ticks: int = 15,
-) -> int:
-    """
-    Wait until cluster tx_count stops moving for a short period.
-    Returns the latest observed tx_count.
-    """
+    stable_ticks: int = 5,
+) -> tuple[int, float]:
+    """Returns (final_tx_count, timestamp_of_first_stability)"""
     last = get_primary_tx_count(lab_dir, lab_type)
     stable = 0
     deadline = time.time() + max_wait_s
+    first_stable_ts = time.time()
 
     while time.time() < deadline:
         time.sleep(poll_s)
@@ -308,12 +307,16 @@ def wait_for_tx_quiescence(
         if current == last:
             stable += 1
             if stable >= stable_ticks:
-                return current
+                return current, first_stable_ts
         else:
             stable = 0
             last = current
+            first_stable_ts = time.time()
+            if current % 5000 == 0:
+                print(f"  [wait] Draining background queue... current txs: {current}")
 
-    return last
+    print("  [warn] Timeout raggiunto in wait_for_tx_quiescence, ma procedo comunque.")
+    return last, first_stable_ts
 
 
 def get_cluster_tx_counts(lab_dir: str, nodes: list[str], lab_type: str) -> dict[str, int]:
@@ -379,8 +382,8 @@ def wait_for_comet_completion(
     baseline_total_txs: int,
     n: int,
     timeout_s: int = 600,
-    poll_s: float = 2.0,
-    stable_ticks: int = 5, # 5 tick da 2 secondi = 10 secondi di stabilità
+    poll_s: float = 1.0,
+    stable_ticks: int = 3, 
 ) -> tuple[float | None, dict | None]:
     
     deadline = time.time() + timeout_s
@@ -388,6 +391,7 @@ def wait_for_comet_completion(
     stable_count = 0
     polls = 0
     last_metrics = None
+    first_stable_ts = time.time()
 
     while time.time() < deadline:
         metrics = get_comet_rpc_metrics(lab_dir, COMET_BENCH_NODE)
@@ -399,16 +403,16 @@ def wait_for_comet_completion(
             
             if polls % 5 == 0:
                 print(f"  [wait] Mempool unconfirmed_txs = {metrics['unconfirmed_txs']} (Total txs on chain: {current_txs})")
-            
-            # NUOVA CONDIZIONE: Quiescenza su total_txs
+        
             if current_txs == last_total_txs:
                 stable_count += 1
                 if stable_count >= stable_ticks:
                     print(f"  [wait] Chain quiescent. Blocks stopped growing at {current_txs} txs.")
-                    return time.time(), metrics
+                    return first_stable_ts, metrics
             else:
                 stable_count = 0
                 last_total_txs = current_txs
+                first_stable_ts = time.time() # Segna il momento in cui e' cambiato l'ultima volta
         else:
             if polls % 5 == 0:
                 print("  [wait] Attenzione: Impossibile contattare CometBFT RPC (Nodo molto sotto sforzo, attendo...)")
@@ -554,7 +558,7 @@ def main():
     parser.add_argument("lab_dir",
                         help="Path to the Kathara lab directory")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[50000],
+                        default=[100,500,1000,5000,10000,50000,100000],
                         help="Burst sizes N to benchmark.")
     parser.add_argument("--concurrency", type=int,
                         default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "64")),
@@ -608,27 +612,43 @@ def main():
             print("ERROR: CometBFT initialization timed out. Aborting.", file=sys.stderr)
             sys.exit(1)
 
-    benchmark_mode_enabled = (lab_type == "cometbft")
-    if benchmark_mode_enabled:
-        set_raw_throughput_mode(args.lab_dir, True)
+    benchmark_mode_enabled = False
+    mute_flag_path = os.path.join(args.lab_dir, "shared", "disable_negative_alerts")
+    
     try:
+        if lab_type == "cometbft":
+            set_benchmark_mode(args.lab_dir, True)
+            set_raw_throughput_mode(args.lab_dir, True)
+            benchmark_mode_enabled = True
+            
+            # Mute IDS alerts and feedback loop for clean benchmark
+            print(f"  [config] Muting IDS alerts and actuator feedback...")
+            with open(mute_flag_path, "w") as f:
+                f.write("1")
+
         for step_idx, n in enumerate(args.steps):
             print(f"\n{'─' * 55}")
             print(f"  Step {step_idx + 1}/{len(args.steps)} — N = {n:,}")
             print(f"{'─' * 55}")
 
-            start_wall = time.time()
             if lab_type == "cometbft":
                 rpc_targets = [x.strip() for x in args.comet_rpc_targets.split(",") if x.strip()]
+                
+                print(f"  [pre] Waiting for tx_count quiescence before baseline…")
+                wait_for_tx_quiescence(args.lab_dir, lab_type)
+                
                 baseline_metrics = get_comet_rpc_metrics(args.lab_dir, COMET_BENCH_NODE)
                 if baseline_metrics is None:
                     print("ERROR: Failed to query CometBFT baseline metrics.", file=sys.stderr)
                     sys.exit(1)
                 baseline = baseline_metrics["total_txs"]
+
                 print(
                     f"  [pre] baseline total_txs={baseline}, "
                     f"unconfirmed_txs={baseline_metrics['unconfirmed_txs']}"
                 )
+                
+                start_wall = time.time() # Misura solo dall'invio effettivo
                 stats = run_cometbft_bench(
                     args.lab_dir,
                     n,
@@ -642,14 +662,15 @@ def main():
                     baseline_total_txs=baseline,
                     n=n,
                     timeout_s=600,
-                    poll_s=2.0,
+                    poll_s=1.0,
+                    stable_ticks=3,
                 )
                 if completion_ts is None or completion_metrics is None:
                     print("ERROR: Timed out waiting for chain completion condition.", file=sys.stderr)
                     sys.exit(1)
                 wall_time = completion_ts - start_wall
                 committed = completion_metrics["total_txs"] - baseline
-                tps = n / wall_time if wall_time > 0 else 0.0
+                tps = committed / wall_time if wall_time > 0 else 0.0
                 send_errors = int(stats.get("SendErrors", 0)) if stats else 0
                 sent = int(stats.get("Sent", n)) if stats else n
                 stats = {
@@ -667,21 +688,27 @@ def main():
                 }
             else:
                 print(f"  [pre] Waiting for tx_count quiescence before baseline…")
-                settled = wait_for_tx_quiescence(args.lab_dir, lab_type)
+                settled, _ = wait_for_tx_quiescence(args.lab_dir, lab_type)
                 print(f"  [pre] quiesced tx_count = {settled}")
                 print("  [pre] Snapshotting tx_count baseline…")
                 baseline = get_primary_tx_count(args.lab_dir, lab_type)
                 print(f"  [pre] baseline = {baseline}")
+                
+                start_wall = time.time()
                 stats = run_quorum_bench(args.lab_dir, n)
+                
+                # Wall time iniziale basato sulla fine del tool di benchmark
                 wall_time = time.time() - start_wall
+
                 if stats is None:
                     print("  [warn] BENCH_STATS missing — computing from /tx_count delta.")
-                    final = wait_for_tx_quiescence(args.lab_dir, lab_type)
+                    final, final_ts = wait_for_tx_quiescence(args.lab_dir, lab_type)
+                    wall_time = final_ts - start_wall
                     committed = max(0, final - baseline)
                     tps = committed / wall_time if wall_time > 0 else 0.0
                     stats = {
                         "N": n, "Sent": n,
-                        "SentTime": wall_time,
+                        "SentTime": float(time.time() - start_wall),
                         "Transactions": committed,
                         "SuccessRate": committed / n * 100 if n > 0 else 0,
                         "TotalTimeSeconds": wall_time,
@@ -689,7 +716,8 @@ def main():
                     }
 
                 if stats is not None:
-                    settled_final = wait_for_tx_quiescence(args.lab_dir, lab_type)
+                    settled_final, settled_ts = wait_for_tx_quiescence(args.lab_dir, lab_type)
+                    wall_time = settled_ts - start_wall
                     settled_committed = max(0, settled_final - baseline)
                     reported_committed = int(stats.get("Transactions", 0))
                     if settled_committed > reported_committed:
@@ -729,6 +757,8 @@ def main():
         if benchmark_mode_enabled:
             set_raw_throughput_mode(args.lab_dir, False)
             set_benchmark_mode(args.lab_dir, False)
+            if os.path.exists(mute_flag_path):
+                os.remove(mute_flag_path)
 
 
     data_file = os.path.join(res_dir, "blockchain_capacity.json")
