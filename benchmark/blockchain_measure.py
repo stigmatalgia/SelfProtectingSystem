@@ -34,20 +34,34 @@ def main():
     res_dir = f"result/{lab_type}"
     os.makedirs(res_dir, exist_ok=True)
     
-    # Inietta SAFE_ENVIRONMENT prima della run per esser sicuri di azzerare i blocchi dedup in sospeso
-    # eventualmente lasciati in canna dalle run precedenti (ex. blockchain_benchmark)
-    # IMPORTANTE: In Quorum (e CometBFT) serve il consenso della maggioranza, quindi resettiamo tutti i nodi.
+    # Mappa nodo -> agent_id usato dall'alert_forwarder di quell'IDS
+    # (deve corrispondere al campo 'ids' che i forwarder reali usano nelle POST)
+    agent_map = {
+        "light0": "snort",
+        "light1": "suricata",
+        "light2": "zeek",
+    } if lab_type == "cometbft" else {
+        "member0": "snort",
+        "member1": "suricata",
+        "member2": "zeek",
+    }
+
+    def reset_dedup(lab_dir, nodes, agent_map):
+        """Invia SAFE_ENVIRONMENT con il corretto agent_id a ogni nodo per pulire seen_types."""
+        for node in nodes:
+            agent = agent_map.get(node, node)
+            payload = json.dumps([{"ids": agent, "type": "SAFE_ENVIRONMENT", "value": 0}])
+            cmd_reset = (
+                f"kathara exec -d {lab_dir} {node} -- "
+                f"curl -s --connect-timeout 2 --max-time 2 -X POST "
+                f"-H 'Content-Type: application/json' "
+                f"-d '{payload}' http://localhost:3000/alert"
+            )
+            run_shell(cmd_reset, timeout_s=5, label=f"reset {node}")
+
     print("Resetting blockchain node state to SAFE_ENVIRONMENT prima di simulare...")
     reset_nodes = ["light0", "light1", "light2"] if lab_type == "cometbft" else ["member0", "member1", "member2"]
-    
-    for node in reset_nodes:
-        cmd_reset = (
-            f"kathara exec -d {args.lab_dir} {node} -- "
-            "curl -s --connect-timeout 2 --max-time 2 -X POST -H 'Content-Type: application/json' "
-            "-d '[{\"type\": \"SAFE_ENVIRONMENT\", \"value\": 1}]' http://localhost:3000/alert"
-        )
-        run_shell(cmd_reset, timeout_s=5, label=f"")
-    
+    reset_dedup(args.lab_dir, reset_nodes, agent_map)
     time.sleep(2)
 
     deltas = []
@@ -71,12 +85,11 @@ def main():
                 print(f"Warning: attacker request failed: {err}")
         
         # Polling per attendere la reazione del sistema
-        # MODIFICA 2: Portato da 15 a 60 (60 * 0.5s = 30 secondi di pazienza massima prima di dare "fallito")
-        max_retries = 60
+        max_retries = 6000
         delta_val = None
         
         for attempt in range(max_retries):
-            time.sleep(0.5) # Attesa per permettere a IDS -> Blockchain -> Actuator di elaborare
+            time.sleep(0.01) # Attesa per permettere a IDS -> Blockchain -> Actuator di elaborare
             
             measure_script = SCRIPT_DIR / "measure_response_time.py"
             cmd = f"{sys.executable} {measure_script} {args.lab_dir} --since {start_ts}"
@@ -94,9 +107,13 @@ def main():
             print(f"Attacco {i} fallito o non rilevato in tempo dal sistema di difesa.")
             if out.stderr.strip():
                 print(f"Dettaglio errore misura (ult. tentativo): {out.stderr.strip()}")
-            
+
+        # Reset dedup tra un attacco e l'altro: svuota seen_types per tutti gli agenti
+        # così il prossimo attacco SQL viene processato come nuovo (non bloccato dalla dedup).
         if i < args.N:
+            reset_dedup(args.lab_dir, reset_nodes, agent_map)
             time.sleep(args.cooldown)
+
 
     if not deltas:
         print("\nWarning: nessun dato rilevato nel range temporale complessivo. Salvo comunque un file vuoto senza interrompere la suite.")

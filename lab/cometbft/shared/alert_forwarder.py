@@ -61,32 +61,45 @@ def forwarder_worker(worker_id):
         if not batch:
             continue
 
-        data = json.dumps(batch).encode('utf-8')
-        
-        success = False
-        retries = 3
-        while not success and retries > 0:
-            try:
-                # Usiamo Keep-Alive per non chiudere il socket
-                headers = {'Content-Type': 'application/json', 'Connection': 'keep-alive'}
-                conn.request("POST", "/alert", body=data, headers=headers)
-                response = conn.getresponse()
-                resp_data = response.read() # Leggiamo la risposta per liberare il socket
-                
-                if response.status in [200, 202, 201]:
-                    success = True
-                    sys.stdout.write(f"[SEND] Successfully forwarded {len(batch)} alerts to {VALIDATOR_IP}\n")
-                else:
-                    sys.stdout.write(f"[ERROR] Failed to forward alerts: {response.status} - {resp_data.decode()}\n")
+        # Separa il batch per tipo di alert prima dell'invio.
+        # Ogni POST contiene SOLO alert dello stesso tipo, così la dedup API
+        # riceve un param_mask con UN solo bit set → genera una transazione
+        # separata per tipo → massimizza le tx (4 per nodo × 3 nodi = 12).
+        # Senza questa separazione, un batch misto brucia tutti i tipi in 1 tx.
+        by_type: dict = {}
+        for item in batch:
+            t = item.get("type", "UNKNOWN")
+            by_type.setdefault(t, []).append(item)
+
+        for alert_type, type_batch in by_type.items():
+            data = json.dumps(type_batch).encode('utf-8')
+
+            success = False
+            retries = 3
+            while not success and retries > 0:
+                try:
+                    headers = {'Content-Type': 'application/json', 'Connection': 'keep-alive'}
+                    conn.request("POST", "/alert", body=data, headers=headers)
+                    response = conn.getresponse()
+                    resp_data = response.read()
+
+                    if response.status in [200, 202, 201]:
+                        success = True
+                        sys.stdout.write(
+                            f"[SEND] Forwarded {len(type_batch)}× {alert_type} alerts to {VALIDATOR_IP}\n"
+                        )
+                    else:
+                        sys.stdout.write(
+                            f"[ERROR] Failed to forward {alert_type}: {response.status} - {resp_data.decode()}\n"
+                        )
+                        retries -= 1
+                except Exception as e:
+                    sys.stdout.write(f"[ERROR] Connection error to {VALIDATOR_IP}: {e}\n")
+                    connect()
                     retries -= 1
-            except Exception as e:
-                sys.stdout.write(f"[ERROR] Connection error to {VALIDATOR_IP}: {e}\n")
-                # Se l'API chiude la connessione, ci riconnettiamo
-                connect()
-                retries -= 1
-                time.sleep(0.1)
-        sys.stdout.flush()
-                
+                    time.sleep(0.1)
+            sys.stdout.flush()
+
         for _ in batch:
             alert_queue.task_done()
 
@@ -94,7 +107,7 @@ def follow(file_path):
     while True:
         line = file_path.readline()
         if not line:
-            time.sleep(0.1)
+            time.sleep(0.01)
             continue
         yield line
 

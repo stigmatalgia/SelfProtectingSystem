@@ -152,6 +152,18 @@ impl Ledger {
 
     pub fn tx_count(&self) -> u64 { self.committed_txs }
 
+    /// Restituisce il vettore dei valori correnti CONFERMATI per ogni parametro
+    /// (nell'ordine canonico SQL_INJECTION, XSS_ATTACK, PATH_TRAVERSAL, COMMAND_INJECTION).
+    /// Valore 0 = sicuro, 1 = attacco confermato via BFT.
+    /// Usato dalla dedup API per scartare alert ridondanti rispetto allo stato reale.
+    pub fn get_confirmed_values(&self) -> [u64; 4] {
+        let mut out = [0u64; 4];
+        for i in 0..self.status_map.len().min(4) {
+            out[i] = self.status_map[i].current_value;
+        }
+        out
+    }
+
     pub fn get_state(&self) -> String {
         self.status_map.iter()
             .map(|s| s.current_value.to_string())

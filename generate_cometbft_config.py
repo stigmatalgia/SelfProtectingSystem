@@ -140,15 +140,15 @@ recheck = false
 [consensus]
 # Limiti di "pazienza" alti: se la rete è lenta sotto sforzo, i nodi aspettano senza fallire.
 # Se la rete è veloce, voteranno istantaneamente in pochi millisecondi.
-timeout_propose = "2s"
+timeout_propose = "1s"
 timeout_propose_delta = "200ms"
-timeout_prevote = "2s"
+timeout_prevote = "1s"
 timeout_prevote_delta = "200ms"
-timeout_precommit = "2s"
+timeout_precommit = "1s"
 timeout_precommit_delta = "200ms"
 
 # ZERO PAUSE: Non appena il blocco è approvato, passa subito al successivo.
-timeout_commit = "50ms"
+timeout_commit = "1ms"
 
 skip_timeout_commit = true
 peer_gossip_sleep_duration = "50ms"

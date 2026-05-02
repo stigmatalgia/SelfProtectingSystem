@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use std::sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}};
+use std::collections::HashSet;
 use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc};
 use crate::types::{TxCount, VoteTx};
@@ -41,7 +42,9 @@ pub mod stats {
     pub struct LocalStats {
         pub received: u64,
         pub processed: u64,
-        pub last_voted: HashMap<String, String>,
+        // Cache locale: agente -> set di tipi già inoltrati questo step.
+        // Bloccato finché non arriva SAFE_ENVIRONMENT (reset).
+        pub seen_types: HashMap<String, HashSet<String>>,
     }
 }
 
@@ -120,16 +123,81 @@ async fn handle_alert(
         h
     };
 
-    // Build bitmask
+    // Build bitmask e vettore normalizzato
+    const PARAM_NAMES: [&str; 4] = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"];
     let mut param_mask = 0u32;
     let mut param_values = [0u64; 4];
-    for (i, &p) in ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"].iter().enumerate() {
+    for (i, &p) in PARAM_NAMES.iter().enumerate() {
         if let Some(&v) = param_map.get(p) {
             param_mask |= 1 << i;
             param_values[i] = v;
         }
     }
 
+
+    // ── Deduplicazione locale per tipo per agente ────────────────────────────
+    //
+    // Ogni nodo mantiene una cache locale `seen_types[agent_id]` con i tipi di
+    // attacco già inoltrati in questo step. Il PRIMO alert di ogni tipo passa;
+    // i successivi dello stesso tipo vengono scartati localmente senza aspettare
+    // la conferma BFT (che richiede ~1s per blocco, troppo lenta rispetto alla
+    // velocità degli alert in ms).
+    //
+    // Comportamento per step con 4 tipi × 3 nodi:
+    //   light0 (snort):    SQL✓ XSS✓ PATH✓ CMD✓ → 4 tx, poi tutto scartato
+    //   light1 (suricata): SQL✓ XSS✓ PATH✓ CMD✓ → 4 tx, poi tutto scartato
+    //   light2 (zeek):     SQL✓ XSS✓ PATH✓ CMD✓ → 4 tx, poi tutto scartato
+    //   Totale = 12 tx per step.
+    //
+    // Al reset (SAFE_ENVIRONMENT), seen_types[agent_id] viene svuotata → il
+    // prossimo step riparte da zero.
+    {
+        let mut stats = s.local_stats.write().unwrap();
+        stats.received += alerts.len() as u64;
+
+        if is_safe_env {
+            // Reset cache per questo agente
+            stats.seen_types.remove(&agent_id);
+            // Non filtrare il voto SAFE_ENVIRONMENT: va inviato al ledger
+        } else {
+            let ledger_guard = s.ledger.read().unwrap();
+            if !ledger_guard.dedup_disabled {
+                let seen = stats.seen_types.entry(agent_id.clone()).or_default();
+
+                // Filtra: tieni solo i tipi NON ancora visti per questo agente
+                let mut new_mask = 0u32;
+                let mut new_values = [0u64; 4];
+                for (i, &p) in PARAM_NAMES.iter().enumerate() {
+                    if (param_mask & (1 << i)) != 0 && !seen.contains(p) {
+                        new_mask |= 1 << i;
+                        new_values[i] = param_values[i];
+                    }
+                }
+
+                if new_mask == 0 {
+                    // Tutti i tipi già inoltrati questo step → scarta
+                    log::info!(
+                        "[API] DEDUP DROP agent={} — tutti i tipi già inoltrati: {:?}",
+                        agent_id, seen
+                    );
+                    return StatusCode::OK;
+                }
+
+                // Marca i nuovi tipi come visti
+                for (i, &p) in PARAM_NAMES.iter().enumerate() {
+                    if (new_mask & (1 << i)) != 0 {
+                        seen.insert(p.to_string());
+                    }
+                }
+
+                // Aggiorna mask/values per includere solo i tipi nuovi
+                param_mask = new_mask;
+                param_values = new_values;
+            }
+        }
+    }
+
+    // Costruisce il VoteTx con i valori (eventualmente filtrati) dalla dedup
     let vote = VoteTx {
         id: seq_num,
         agent_id: agent_id_u32,
@@ -138,30 +206,6 @@ async fn handle_alert(
         timestamp_ms,
     };
 
-    // API-level Deduplication
-    {
-        let mut stats = s.local_stats.write().unwrap();
-        stats.received += alerts.len() as u64;
-
-        let ledger_guard = s.ledger.read().unwrap();
-        if !ledger_guard.dedup_disabled {
-            if is_safe_env {
-                // Clearing cache for this agent on SAFE_ENVIRONMENT reset
-                stats.last_voted.remove(&agent_id);
-            } else {
-                // Normalize values to 0/1 for the state key to avoid "leaks" when 
-                // batch sizes or alert counts vary (intensity doesn't change state type).
-                let normalized_values = param_values.map(|v| if v > 0 { 1 } else { 0 });
-                let state_key = format!("{:x}-{:?}", param_mask, normalized_values);
-                
-                if stats.last_voted.get(&agent_id).map(|s| s.as_str()) == Some(state_key.as_str()) {
-                    log::info!("[API] Dropping duplicate alert from agent {}: key={}", agent_id, state_key);
-                    return StatusCode::OK;
-                }
-                stats.last_voted.insert(agent_id, state_key);
-            }
-        }
-    }
     match s.tx_queue.send(vote).await {
         Ok(_) => {
             let mut stats = s.local_stats.write().unwrap();
