@@ -132,7 +132,7 @@ max_num_inbound_peers = 80
 max_num_outbound_peers = 40
 
 [mempool]
-size = 50000
+size = 100000
 cache_size = 20000
 max_txs_bytes = 2684354560
 max_tx_bytes = 262144
