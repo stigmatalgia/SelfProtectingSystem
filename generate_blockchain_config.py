@@ -15,6 +15,7 @@ import tarfile
 import shutil
 import sys
 import io
+import time
 
 # Protezione contro errori di codifica in ambienti Kathara
 if sys.stdout.encoding is None:
@@ -32,34 +33,81 @@ def generate_blockchain_configurations():
     consensus = 'qbft'
     blocktime = 1
     manager = Kathara.get_instance()
-    
+
     logger.info("Configuring bootlab for generating nodes' configurations...")
     boot_lab = Lab("boot_lab")
     bootnode = boot_lab.new_machine("bootnode", **{'image': 'kathara/quorum'})
-    
+
     boot_lab.create_startup_file_from_string(
         bootnode,
-        f"npx quorum-genesis-tool --consensus {consensus} --chainID 2222 --emptyblockperiodseconds 600 --blockperiod {blocktime} "
+        # quorum-genesis-tool is baked into the image at
+        # /home/qbft/node_modules; invoking it through bare `npx` from /
+        # forces a registry lookup that fails on isolated Kathara networks.
+        f"cd /home/qbft && ./node_modules/.bin/quorum-genesis-tool "
+        f"--consensus {consensus} --chainID 2222 --emptyblockperiodseconds 600 --blockperiod {blocktime} "
         " --difficulty 1 --gasLimit '0xFFFFFFFFF' --isQuorum --coinbase '0x0000000000000000000000000000000000000000' "
         f"--validators {num_validators} --members {num_members} --bootnodes 0 --outputPath '/lab/quorum/shared'"
     )
+
+    deployed = False
+    try:
+        logger.info("Deploying bootlab...")
+        manager.deploy_lab(boot_lab)
+        deployed = True
+
+        # Wait for quorum-genesis-tool to actually produce its output.
+        # The tool may need to be fetched by npx on first use, which can take
+        # a while on cold caches — grabbing the archive immediately used to
+        # race against it and fail with "Could not find /lab/quorum/shared".
+        logger.info("Waiting config generation...")
+        # quorum-genesis-tool nests its artifacts under a timestamped
+        # directory and populates it incrementally: waiting for the FIRST
+        # directory made the download race against key generation, yielding
+        # truncated archives. Wait until every expected artifact exists.
+        n_val_memb = num_validators + num_members
+        probe = (
+            "D=$(ls -d /lab/quorum/shared/*/ 2>/dev/null | head -1); "
+            f"[ -n \"$D\" ] && "
+            f"[ \"$(ls -d $D/validator* $D/member* 2>/dev/null | wc -l)\" -ge {n_val_memb} ] && "
+            "[ -s \"$D/goQuorum/permissioned-nodes.json\" ] && echo GEN_READY"
+        )
+        tar_path = os.path.join(".", "lab", "quorum", "shared.tar")
+        ready = False
+        for _ in range(120):  # up to ~4 minutes
+            stdout, _, _ = manager.exec_obj(
+                bootnode,
+                ["sh", "-c", probe],
+                stream=False,
+            )
+            if stdout is None:
+                time.sleep(2)
+                continue
+            listing = stdout.decode() if isinstance(stdout, bytes) else str(stdout)
+            if "GEN_READY" in listing:
+                ready = True
+                # Give the tool a final moment to flush, then download
+                # immediately: the artifacts live on the ephemeral machine
+                # filesystem.
+                time.sleep(2)
+                logger.info("Downloading configurations on the host machine...")
+                with open(tar_path, 'wb') as f:
+                    bits, stat = bootnode.api_object.get_archive('/lab/quorum/shared')
+                    for chunk in bits:
+                        f.write(chunk)
+                break
+            time.sleep(2)
+        if not ready:
+            raise RuntimeError(
+                "quorum-genesis-tool did not produce output in /lab/quorum/shared "
+                "(timeout). Inspect the bootnode logs for details."
+            )
+    finally:
+        logger.info("Undeploying bootlab...")
+        manager.undeploy_lab(lab=boot_lab)
     
-    logger.info("Deploying bootlab...")
-    manager.deploy_lab(boot_lab)
-    logger.info("Waiting config generation...")
-    manager.exec_obj(bootnode, "ls", wait=True)
-    
-    logger.info("Downloading configurations on the host machine...")
-    tar_path = os.path.join(".", "lab", "quorum", "shared.tar")
-    with open(tar_path, 'wb') as f:
-        bits, stat = bootnode.api_object.get_archive('/lab/quorum/shared')
-        for chunk in bits:
-            f.write(chunk)
-            
-    logger.info("Undeploying bootlab...")
-    manager.undeploy_lab(lab=boot_lab)
-    
-    configurations_path = os.path.join("..", "resources", "blockchain_configurations")
+    # Keep generated material INSIDE the repository (the old
+    # ../resources/ path escaped the project root and broke portability).
+    configurations_path = os.path.join("lab", "quorum", "generated_configurations")
     if os.path.exists(configurations_path):
         shutil.rmtree(configurations_path)
     os.makedirs(configurations_path, exist_ok=True)

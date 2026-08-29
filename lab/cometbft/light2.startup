@@ -19,7 +19,9 @@ sysctl -w net.ipv4.ip_local_port_range="10240 65535"
 sysctl -w net.ipv4.tcp_tw_reuse=1
 sysctl -w net.ipv4.tcp_fin_timeout=15
 # ── Setup directories ───────────────────────────────────────────────────────
-mkdir -p /root/.cometbft/config
+# Mount tmpfs for CometBFT data directory to eliminate WAL fsync latency
+mkdir -p /root/.cometbft/config /root/.cometbft/data
+mount -t tmpfs -o size=512M tmpfs /root/.cometbft/data 2>/dev/null || true
 cp /shared/light2/genesis.json /root/.cometbft/config/genesis.json
 cp /shared/light2/node_key.json /root/.cometbft/config/node_key.json
 cp /shared/light2/config.toml /root/.cometbft/config/config.toml
@@ -27,7 +29,7 @@ cp /shared/light2/sps_config.toml /root/sps_config.toml
 
 # ── Start sps-node ──────────────────────────────────────────────────────────
 echo "Starting sps-node (light2)..." >> /var/log/sps-node.log
-SPS_FAST_CHECKTX=1 RUST_LOG=info sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
+SPS_FAST_CHECKTX=1 RUST_LOG=warn sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
 # ── Start CometBFT Node ─────────────────────────────────────────────────────

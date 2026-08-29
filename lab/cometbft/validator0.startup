@@ -22,7 +22,9 @@ sysctl -w net.ipv4.ip_local_port_range="10240 65535"
 sysctl -w net.ipv4.tcp_tw_reuse=1
 sysctl -w net.ipv4.tcp_fin_timeout=15
 # ── Setup directories ───────────────────────────────────────────────────────
+# Mount tmpfs for CometBFT data directory to eliminate WAL fsync latency
 mkdir -p /root/.cometbft/config /root/.cometbft/data
+mount -t tmpfs -o size=512M tmpfs /root/.cometbft/data 2>/dev/null || true
 chmod +x /shared/handshake.sh
 
 # Initial configs from generate_cometbft_config.py
@@ -40,7 +42,7 @@ touch /shared/handshake/validator0
 
 # ── Start sps-node (ABCI Server + HTTP API) ─────────────────────────────────
 echo "Starting sps-node ABCI app..." >> /var/log/sps-node.log
-SPS_FAST_CHECKTX=1 RUST_LOG=info sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
+SPS_FAST_CHECKTX=1 RUST_LOG=warn sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
 # ── Start CometBFT Node (supervised restart) ────────────────────────────────

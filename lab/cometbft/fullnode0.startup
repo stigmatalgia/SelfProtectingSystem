@@ -19,7 +19,9 @@ sysctl -w net.ipv4.tcp_tw_reuse=1
 sysctl -w net.ipv4.tcp_fin_timeout=15
 
 # ── Setup directories ───────────────────────────────────────────────────────
+# Mount tmpfs for CometBFT data directory to eliminate WAL fsync latency
 mkdir -p /root/.cometbft/config /root/.cometbft/data
+mount -t tmpfs -o size=512M tmpfs /root/.cometbft/data 2>/dev/null || true
 
 # Wait for validator0 to perform handshake and generate genesis
 echo "Waiting for genesis from validator0..."
@@ -37,7 +39,7 @@ cp /shared/handshake/validator0_genesis.json /root/.cometbft/config/genesis.json
 
 # ── Start sps-node ──────────────────────────────────────────────────────────
 echo "Starting sps-node (fullnode0)..." >> /var/log/sps-node.log
-SPS_FAST_CHECKTX=1 RUST_LOG=info sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
+SPS_FAST_CHECKTX=1 RUST_LOG=warn sps-node --config /root/sps_config.toml >> /var/log/sps-node.log 2>&1 &
 SPS_PID=$!
 
 # ── Start CometBFT Node ─────────────────────────────────────────────────────

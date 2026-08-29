@@ -68,18 +68,29 @@ struct IncomingAlert {
     pub value: u64,
 }
 
+/// Map a free-form agent id (e.g. "snort", "suricata", "zeek") to a stable u32.
+/// Must be used consistently by every handler: slicing fixed byte offsets
+/// (`&id[..8]`) panics on short ids such as "light0".
+fn agent_id_to_u32(agent_id: &str) -> u32 {
+    if agent_id.len() >= 8 && agent_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return u32::from_str_radix(&agent_id[..8], 16).unwrap_or(0);
+    }
+    // Simple hash for string-based IDs like "snort", "suricata", "zeek"
+    let mut h = 0u32;
+    for (i, b) in agent_id.as_bytes().iter().enumerate() {
+        h = h.wrapping_add((*b as u32).wrapping_shl(i as u32 % 4));
+    }
+    h
+}
+
 async fn handle_alert(
     State(s): State<ApiState>,
     Json(alerts): Json<Vec<IncomingAlert>>,
 ) -> impl IntoResponse {
     if alerts.is_empty() { return StatusCode::OK; }
-    
-    let agent_id = alerts[0].ids.clone();
-    log::info!("[API] Received batch of {} alerts from agent {}", alerts.len(), agent_id);
 
-    {
-        // Moved stats increment down to handle_alert body for unified lock management
-    }
+    let agent_id = alerts[0].ids.clone();
+    log::debug!("[API] Received batch of {} alerts from agent {}", alerts.len(), agent_id);
 
     let mut param_map: HashMap<String, u64> = HashMap::new();
     let mut is_safe_env = false;
@@ -110,18 +121,8 @@ async fn handle_alert(
         .as_millis() as u64;
 
     let seq_num = s.seq.fetch_add(1, Ordering::SeqCst);
-    
-    // Map agent_id string to u32 for the optimized VoteTx
-    let agent_id_u32 = if agent_id.len() >= 8 && agent_id.chars().all(|c| c.is_ascii_hexdigit()) {
-        u32::from_str_radix(&agent_id[..8], 16).unwrap_or(0)
-    } else {
-        // Simple hash for string-based IDs like "snort", "suricata", "zeek"
-        let mut h = 0u32;
-        for (i, b) in agent_id.as_bytes().iter().enumerate() {
-            h = h.wrapping_add((*b as u32).wrapping_shl(i as u32 % 4));
-        }
-        h
-    };
+
+    let agent_id_u32 = agent_id_to_u32(&agent_id);
 
     // Build bitmask e vettore normalizzato
     const PARAM_NAMES: [&str; 4] = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"];
@@ -176,7 +177,7 @@ async fn handle_alert(
 
                 if new_mask == 0 {
                     // Tutti i tipi già inoltrati questo step → scarta
-                    log::info!(
+                    log::debug!(
                         "[API] DEDUP DROP agent={} — tutti i tipi già inoltrati: {:?}",
                         agent_id, seen
                     );
@@ -223,19 +224,13 @@ async fn handle_stress(
     State(s): State<ApiState>,
     Json(alert): Json<IncomingAlert>,
 ) -> impl IntoResponse {
-    let mut parameters = Vec::new();
-    let mut values = Vec::new();
-    
-    parameters.push(alert.r#type.to_uppercase());
-    values.push(alert.value);
-
     let timestamp_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
 
     let seq_num = s.seq.fetch_add(1, Ordering::SeqCst);
-    let agent_id_u32 = u32::from_str_radix(&s.node_id[..8], 16).unwrap_or(0);
+    let agent_id_u32 = agent_id_to_u32(&s.node_id);
 
     let mut param_mask = 0u32;
     let mut param_values = [0u64; 4];

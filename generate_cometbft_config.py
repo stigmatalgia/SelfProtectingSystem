@@ -52,6 +52,11 @@ AGENTS_COUNT = 3   # majority threshold (votes > agents_count/2)
 # Actuator endpoint
 ACTUATOR_URL = "http://172.16.4.1:5000/action"
 
+# CometBFT RPC endpoints the API worker submits transactions to.
+# Listing ALL validators means whichever validator is round-leader already
+# holds every submitted alert — no waiting for inter-validator gossip.
+COMET_RPC_SUBMIT = ",".join(f"http://{ip}:26657" for ip in VALIDATORS.values())
+
 
 # ── Key generation ──────────────────────────────────────────────────────────
 
@@ -85,6 +90,7 @@ def build_sps_config(node_id: str, role: str, listen_ip: str, peers: list[str], 
     peer_list = ", ".join(f'"{p}"' for p in peers)
     actuator_section = f'\n[actuator]\nurl = "{actuator_url}"\n' if actuator_url else ""
     dedup_val = "true" if disable_dedup else "false"
+    comet_section = f'\n[comet]\nrpc_url = "{COMET_RPC_SUBMIT}"\n'
 
     return f"""# sps-node configuration
 
@@ -106,55 +112,96 @@ disable_dedup = {dedup_val}
 
 [peers]
 persistent = [{peer_list}]
+{comet_section}
 {actuator_section}
 """
 
 def build_comet_config(peers: list[str]) -> str:
-    """Render the native CometBFT config.toml tuned for raw TPS benchmarks."""
+    """Render the native CometBFT config.toml tuned for raw TPS benchmarks.
+
+    Key design choices (vetted empirically on this 8-core testbed):
+    - db_backend = "memdb" eliminates all disk I/O from the state/block
+      stores; [tx_index] indexer = "null" drops the per-block tx_index.db
+      fsync; the data dir is mounted on tmpfs so the consensus WAL fsyncs
+      in memory instead of on the overlay filesystem.
+    - max_packet_msg_payload_size = 1 MiB, so a 64 KiB block part is sent as
+      a single P2P packet instead of ~64 × 1 KiB fragments (the default).
+      Fragmenting block parts is what made large-block propagation take
+      seconds and collapse consensus under burst load.
+    - create_empty_blocks = false keeps the ledger event-driven (no wasted
+      idle rounds, as required by the SPS design): a single injected tx is
+      committed immediately via the TxsAvailable signal, while the 500ms
+      interval bounds the idle round cadence.  Combined with the 256 KiB
+      block cap (genesis) each block stays to ~7 parts and finalizes well
+      inside the round timeouts, so bursts drain in a steady stream instead
+      of one multi-MiB block that sends consensus into a round spiral.
+    - timeout_propose/prevote/precommit = "2s" with "200ms" deltas are a
+      pure safety net: consensus is message-driven and normally completes in
+      milliseconds, so latency is unaffected, while the ceiling absorbs
+      scheduling jitter during injection.
+    """
     peers_str = ",".join(peers)
     
     return f"""proxy_app = "tcp://127.0.0.1:26658"
+# In-memory DB backend — the block/state/evidence stores never touch disk,
+# which removes goleveldb write+fsync stalls from the consensus hot path.
+db_backend = "memdb"
 
 [rpc]
 laddr = "tcp://0.0.0.0:26657"
-max_open_connections = 4096
-max_body_bytes = 10000000
+max_open_connections = 16384
+max_body_bytes = 100000000
 
 [p2p]
 laddr = "tcp://0.0.0.0:26656"
 persistent_peers = "{peers_str}"
 addr_book_strict = false
 allow_duplicate_ip = true
-flush_throttle_timeout = "10ms"
+flush_throttle_timeout = "1ms"
 send_rate = 20971520
 recv_rate = 20971520
-max_num_inbound_peers = 80
-max_num_outbound_peers = 40
+# Block parts are 64 KiB; the default max_packet_msg_payload_size is only
+# 1 KiB, which forces every 64 KiB block part to be fragmented into ~64
+# tiny P2P packets. That fragmentation is what made block propagation take
+# seconds and collapse consensus on the shared testbed. Allowing the full
+# block-part size to travel in a single packet removes the bottleneck.
+max_packet_msg_payload_size = 1048576
+max_num_inbound_peers = 200
+max_num_outbound_peers = 100
 
 [mempool]
-size = 200000
-cache_size = 20000
-max_txs_bytes = 2684354560
+size = 500000
+cache_size = 200000
+max_txs_bytes = 4294967296
 max_tx_bytes = 262144
 recheck = false
+
 [consensus]
-# Limiti di "pazienza" alti: se la rete è lenta sotto sforzo, i nodi aspettano senza fallire.
-# Se la rete è veloce, voteranno istantaneamente in pochi millisecondi.
-timeout_propose = "1s"
+# Continuous block production — every new block reaps whatever txs are in
+# the proposer's mempool.  256 KiB blocks (genesis max_bytes) keep each
+# block to ~7 parts, which finalize well inside the timeout below.
+timeout_propose = "2s"
 timeout_propose_delta = "200ms"
-timeout_prevote = "1s"
+timeout_prevote = "2s"
 timeout_prevote_delta = "200ms"
-timeout_precommit = "1s"
+timeout_precommit = "2s"
 timeout_precommit_delta = "200ms"
-
-# ZERO PAUSE: Non appena il blocco è approvato, passa subito al successivo.
+# With skip_timeout_commit the height advances as soon as every precommit is
+# in; the 1ms commit timer is a fallback only.
 timeout_commit = "1ms"
-
 skip_timeout_commit = true
-peer_gossip_sleep_duration = "50ms"
-
+peer_gossip_sleep_duration = "1ms"
+# Event-driven block production: a freshly arrived tx is committed right away
+# (via TxsAvailable) rather than waiting for the next idle round, and the
+# 500ms interval merely bounds the cadence of empty rounds when idle. This is
+# what the SPS paper calls "event-driven ... avoids idle rounds".
 create_empty_blocks = false
 create_empty_blocks_interval = "500ms"
+
+[tx_index]
+# Disable the transaction indexer: it is not needed by the SPS and writing
+# tx_index.db to disk on every block adds another fsync in the commit path.
+indexer = "null"
 """
 
 def json_list(items: list[str]) -> str:
@@ -186,9 +233,16 @@ def generate_ssh_keys():
 
 def generate_all():
     log.info("=== SPS-Chain Config Generator ===")
-    
+
     os.makedirs(SHARED_DIR, exist_ok=True)
-    
+    # Pre-create the handshake exchange directory with host ownership.
+    # Containers run as root (mapped to 'nobody' on the host bind mount): if
+    # THEY create this directory, the host user can no longer clean it up
+    # without sudo ('make cometbft clean-config' would fail).
+    handshake_dir = os.path.join(SHARED_DIR, "handshake")
+    os.makedirs(handshake_dir, exist_ok=True)
+    os.chmod(handshake_dir, 0o777)
+
     all_nodes = list(VALIDATORS.keys()) + list(AGENTS.keys()) + list(FULLNODE.keys())
     identities = {}
     genesis_validators = []
@@ -214,8 +268,8 @@ def generate_all():
         "chain_id": "sps-chain-1",
         "initial_height": "1",
         "consensus_params": {
-            "block": {"max_bytes": "524288", "max_gas": "-1", "time_iota_ms": "1000"},
-            "evidence": {"max_age_num_blocks": "100000", "max_age_duration": "172800000000000", "max_bytes": "524288"},
+            "block": {"max_bytes": "262144", "max_gas": "-1", "time_iota_ms": "1000"},
+            "evidence": {"max_age_num_blocks": "100000", "max_age_duration": "172800000000000", "max_bytes": "262144"},
             "validator": {"pub_key_types": ["ed25519"]},
             "version": {}
         },

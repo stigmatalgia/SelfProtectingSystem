@@ -3,14 +3,15 @@ export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 export PYTHONIOENCODING=utf-8
 # juice_shop all'esterno, se rileva un'attacco tra quelli nelle signature
-# in lista, lo script alert_sender invia al suo light node associato in blockchain
-# un alert sullo stato, si occupa in alert_sender anche di revertare lo stato a safe
+# in lista, alert_forwarder invia al suo light node associato in blockchain
+# un alert sullo stato, si occupa in alert_forwarder anche di revertare lo stato a safe
 # assumendo che la response riesca sempre a mitigare l'attacco.
 
 ip addr add 172.16.3.1/24 dev eth0
 ip addr add 10.0.100.13/24 dev eth2
 ip link set eth1 up
 ip link set eth1 promisc on
+ethtool -K eth1 gro off lro off gso off tso off 2>/dev/null || true
 
 ulimit -n 65535
 
@@ -76,9 +77,6 @@ touch /var/log/zeek/signatures.log
 echo "IDS Zeek avviato"
 
 MEMBER_IP="172.16.3.10"
-
-cp /shared/alert_sender.sh /tmp/alert_sender.sh
-chmod +x /tmp/alert_sender.sh
 
 # Esegue il server puntando al light node associato
 echo "Avvio inoltro alert blockchain..."

@@ -1,7 +1,12 @@
 import json
+import os
+
+# Headless-safe rendering: charts are written straight to file.
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/.mplconfig")
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 
 print("Starting graph generation...")
 os.makedirs('result', exist_ok=True)
@@ -69,6 +74,18 @@ try:
 
     c_sent, c_tps, c_lat, c_trans = extract_data(cbft_data)
     q_sent, q_tps, q_lat, q_trans = extract_data(quorum_data)
+
+    # The two labs may have been benchmarked over different step sets (partial
+    # runs); compare on the intersection of burst sizes so annotations and
+    # lines always pair up.
+    common = sorted(set(c_sent) & set(q_sent))
+    if not common:
+        raise RuntimeError("no overlapping burst sizes between cometbft and quorum results")
+    def _filter(sent, *series):
+        idx = [i for i, x in enumerate(sent) if x in common]
+        return [sent[i] for i in idx], [[s[i] for i in idx] for s in series]
+    c_sent, (c_tps, c_lat, c_trans) = _filter(c_sent, c_tps, c_lat, c_trans)
+    q_sent, (q_tps, q_lat, q_trans) = _filter(q_sent, q_tps, q_lat, q_trans)
 
     c_lat_plot = [max(0.01, l) for l in c_lat]
     q_lat_plot = [max(0.01, l) for l in q_lat]
@@ -165,6 +182,7 @@ except Exception as e:
 try:
     print("Generating Graph 4...")
     import glob
+    import re
 
     def find_latest_data(lab_type):
         files = glob.glob(f'result/{lab_type}/data_N*.json')
@@ -174,7 +192,6 @@ try:
         files.sort(key=lambda x: int(re.search(r'N(\d+)', x).group(1)) if re.search(r'N(\d+)', x) else 0, reverse=True)
         return files[0]
 
-    import re
     q_file = find_latest_data('quorum')
     c_file = find_latest_data('cometbft')
 
@@ -200,7 +217,7 @@ try:
 
     bplot = ax.boxplot([quorum_data, comet_data],
                        patch_artist=True,
-                       labels=[q_label, c_label],
+                       tick_labels=[q_label, c_label],
                        widths=0.15,
                        medianprops=dict(color="#333333", linewidth=2),
                        boxprops=dict(linewidth=1, color="#333333", alpha=0.9),

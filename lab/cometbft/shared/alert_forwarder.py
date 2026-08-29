@@ -33,6 +33,9 @@ DISABLE_NEGATIVE_MARKER = "/shared/disable_negative_alerts"
 
 ALERTS = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"]
 
+# Contatore globale per il sampling dei log [MATCH]
+_match_count = 0
+
 # Coda in RAM per gli alert in uscita
 alert_queue = queue.Queue(maxsize=200000)
 
@@ -112,6 +115,7 @@ def follow(file_path):
         yield line
 
 def main():
+    global _match_count
     sys.stdout.write(f"[INIT] Fast Forwarder started: {IDS_NAME} -> {VALIDATOR_IP}:3000\n")
     sys.stdout.flush()
 
@@ -149,15 +153,19 @@ def main():
                     alert_type.replace("_", " ").lower(),              # sql injection
                     alert_type.replace("_", "-").lower(),              # sql-injection
                 ]
-                
+
                 if any(p in line_lower for p in patterns):
                     payload = {
-                        "ids": IDS_NAME, "message": line.strip(), 
+                        "ids": IDS_NAME, "message": line.strip(),
                         "type": alert_type, "value": 1, "timestamp": datetime.now().isoformat()
                     }
                     alert_queue.put(payload)
-                    sys.stdout.write(f"[MATCH] Found {alert_type} in {IDS_NAME} logs\n")
-                    sys.stdout.flush()
+                    # Log sampling: under bursts (10^4–10^5 alerts) printing one
+                    # line per match saturates the container's stdout pipe.
+                    _match_count += 1
+                    if _match_count % 500 == 1:
+                        sys.stdout.write(f"[MATCH] {alert_type} matched in {IDS_NAME} logs (total {_match_count})\n")
+                        sys.stdout.flush()
                     break
 
 if __name__ == "__main__":

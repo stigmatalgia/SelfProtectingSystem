@@ -308,7 +308,7 @@ def wait_for_tx_quiescence(
     lab_dir: str,
     poll_s: float = 2.0,
     stable_cycles: int = 4,
-    max_wait_s: int = 60,
+    max_wait_s: int = 300,
 ) -> int:
     """
     Aspetta che tx_count smetta di crescere (consenso completato).

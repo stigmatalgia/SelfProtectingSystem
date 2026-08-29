@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 result/
 .DS_Store
+.paper_extract.txt
+**/target/
+.cargo-home/
+.session/
+lab/quorum/generated_configurations/

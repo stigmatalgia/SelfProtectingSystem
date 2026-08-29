@@ -21,9 +21,12 @@ if sys.stderr.encoding is None:
 # Mirrors generate_cometbft_config.py
 COMET_AGENTS   = ["light0", "light1", "light2"]
 COMET_BENCH_NODE   = "light0"          # exec target: sps-bench runs here
+COMET_MEASURE_NODE = "validator0"      # commit progress is read from a validator
+#                                      # (source of truth) so the injection node's
+#                                      # CPU contention can't skew the metric.
 COMET_P2P_TARGET   = "127.0.0.1:26656" # loopback P2P port (node's own listener)
 COMET_API_TARGET   = "127.0.0.1:3000"  # loopback sps-node API
-COMET_RPC_TARGETS  = ["10.99.0.11:26657"]
+COMET_RPC_TARGETS  = ["10.99.0.1:26657", "10.99.0.2:26657", "10.99.0.3:26657"]
 COMET_P2P_PORT     = 26656
 COMET_API_PORT     = 26657
 
@@ -178,11 +181,14 @@ def prepare_sps_bench(lab_dir: str) -> bool:
       3. /shared/sps-bench (synced previously)
     """
     print("\n[prepare] Checking sps-bench availability…")
-    
-    # Check if already in container path (baked in)
-    check = kathara_exec(lab_dir, COMET_BENCH_NODE, "which sps-bench")
-    if "/usr/local/bin/sps-bench" in check or "sps-bench" in check:
-        print("  Found baked-in binary: /usr/local/bin/sps-bench")
+
+    # Check if already in container path (baked into image) or synced to /shared
+    check = kathara_exec(
+        lab_dir, COMET_BENCH_NODE,
+        "bash -c 'command -v sps-bench || test -x /shared/sps-bench && echo BENCH_OK'",
+    )
+    if "BENCH_OK" in check:
+        print("  Found sps-bench binary inside container.")
         return True
 
     # Fallback: check if we have a pre-built binary on host to sync
@@ -295,11 +301,18 @@ def wait_for_tx_quiescence(
     poll_s: float = 1.0,
     stable_ticks: int = 5,
 ) -> tuple[int, float]:
-    """Returns (final_tx_count, timestamp_of_first_stability)"""
+    """
+    Returns (final_tx_count, timestamp_of_first_stability).
+
+    The timestamp is the moment the counter LAST changed before going stable
+    (None if the counter never moved — then `time.time()` at return is used).
+    Anchoring wall-time to the last change avoids attributing idle settle time
+    to throughput.
+    """
     last = get_primary_tx_count(lab_dir, lab_type)
     stable = 0
     deadline = time.time() + max_wait_s
-    first_stable_ts = time.time()
+    last_change_ts: float | None = None
 
     while time.time() < deadline:
         time.sleep(poll_s)
@@ -307,16 +320,16 @@ def wait_for_tx_quiescence(
         if current == last:
             stable += 1
             if stable >= stable_ticks:
-                return current, first_stable_ts
+                return current, last_change_ts if last_change_ts else time.time()
         else:
             stable = 0
             last = current
-            first_stable_ts = time.time()
+            last_change_ts = time.time()
             if current % 5000 == 0:
                 print(f"  [wait] Draining background queue... current txs: {current}")
 
-    print("  [warn] Timeout raggiunto in wait_for_tx_quiescence, ma procedo comunque.")
-    return last, first_stable_ts
+    print("  [warn] Timeout reached in wait_for_tx_quiescence, proceeding anyway.")
+    return last, last_change_ts if last_change_ts else time.time()
 
 
 def get_cluster_tx_counts(lab_dir: str, nodes: list[str], lab_type: str) -> dict[str, int]:
@@ -331,7 +344,7 @@ def get_primary_tx_count(lab_dir: str, lab_type: str) -> int:
     For Quorum this is the aggregate of member0, member1, member2 (distributed load).
     """
     if lab_type == "cometbft":
-        return get_node_tx_count(lab_dir, COMET_BENCH_NODE, lab_type)
+        return get_node_tx_count(lab_dir, COMET_MEASURE_NODE, lab_type)
     else:
         total = 0
         for node in ["member0", "member1", "member2"]:
@@ -348,7 +361,7 @@ def _rpc_int(value, default: int = 0) -> int:
         return default
 
 
-def get_comet_rpc_metrics(lab_dir: str, node: str = COMET_BENCH_NODE) -> dict | None:
+def get_comet_rpc_metrics(lab_dir: str, node: str = COMET_MEASURE_NODE) -> dict | None:
     # Ho aumentato i timeout: sotto sforzo intenso (100k txs) curl potrebbe impiegarci più di 2s!
     tx_count_raw = kathara_exec(
         lab_dir, node, "curl -s --max-time 5 http://127.0.0.1:3000/tx_count", timeout=10
@@ -381,45 +394,94 @@ def wait_for_comet_completion(
     lab_dir: str,
     baseline_total_txs: int,
     n: int,
-    timeout_s: int = 600,
+    timeout_s: int | None = None,
     poll_s: float = 1.0,
-    stable_ticks: int = 3, 
-) -> tuple[float | None, dict | None]:
-    
+    stable_ticks: int = 5,
+) -> tuple[float | None, dict | None, bool]:
+    """
+    Wait until the injected burst has fully landed on-chain.
+
+    Completion requires ALL of:
+      1. progress: total_txs moved above `baseline_total_txs` at least once;
+      2. quiescence: total_txs unchanged for `stable_ticks` consecutive polls;
+      3. drain: num_unconfirmed_txs == 0 on the injection node (its mempool
+         only drains when committed blocks remove the txs).
+
+    Requiring progress removes the historical false-positive where three
+    identical polls taken *before any commit* were reported as "quiescent",
+    producing phantom `Transactions: 0` results on slow or loaded machines.
+
+    Returns (last_commit_ts_or_None, last_metrics, completed_on_time), where
+    last_commit_ts anchors the "first packet sent -> last tx committed" latency
+    used in the paper (Figure 5b).
+    """
+    # Scale patience with burst size: ~120s base + 1s per 1000 txs.
+    if timeout_s is None:
+        timeout_s = max(300, 120 + n // 1000)
     deadline = time.time() + timeout_s
-    last_total_txs = -1
+
+    last_total_txs: int | None = None
     stable_count = 0
     polls = 0
-    last_metrics = None
-    first_stable_ts = time.time()
+    last_metrics: dict | None = None
+    last_change_ts: float | None = None
+    saw_progress = False
 
     while time.time() < deadline:
-        metrics = get_comet_rpc_metrics(lab_dir, COMET_BENCH_NODE)
+        metrics = get_comet_rpc_metrics(lab_dir, COMET_MEASURE_NODE)
         polls += 1
-        
+
         if metrics is not None:
             last_metrics = metrics
             current_txs = metrics["total_txs"]
-            
-            if polls % 5 == 0:
-                print(f"  [wait] Mempool unconfirmed_txs = {metrics['unconfirmed_txs']} (Total txs on chain: {current_txs})")
-        
-            if current_txs == last_total_txs:
-                stable_count += 1
-                if stable_count >= stable_ticks:
-                    print(f"  [wait] Chain quiescent. Blocks stopped growing at {current_txs} txs.")
-                    return first_stable_ts, metrics
-            else:
+            unconfirmed = metrics["unconfirmed_txs"]
+
+            if current_txs > baseline_total_txs:
+                saw_progress = True
+                last_change_ts = time.time()
+
+            if polls % 10 == 0:
+                print(
+                    f"  [wait] committed={current_txs} (baseline {baseline_total_txs}), "
+                    f"unconfirmed={unconfirmed}"
+                )
+
+            if last_total_txs is None or current_txs != last_total_txs:
                 stable_count = 0
                 last_total_txs = current_txs
-                first_stable_ts = time.time() # Segna il momento in cui e' cambiato l'ultima volta
+            else:
+                stable_count += 1
+                if saw_progress and unconfirmed == 0 and stable_count >= stable_ticks:
+                    print(
+                        f"  [wait] Chain drained and quiescent at {current_txs} txs "
+                        f"(+{current_txs - baseline_total_txs} this run)."
+                    )
+                    return last_change_ts, metrics, True
+
+                # No progress at all AND mempool fully drained for a long window:
+                # every sent tx was lost — report honestly instead of hanging.
+                if (
+                    not saw_progress
+                    and unconfirmed == 0
+                    and stable_count >= max(stable_ticks * 6, 30)
+                ):
+                    print(
+                        "  [warn] Mempool drained with ZERO commits — all transactions lost.",
+                        file=sys.stderr,
+                    )
+                    return None, metrics, False
         else:
-            if polls % 5 == 0:
-                print("  [wait] Attenzione: Impossibile contattare CometBFT RPC (Nodo molto sotto sforzo, attendo...)")
-                
+            if polls % 10 == 0:
+                print("  [wait] CometBFT RPC unreachable (node under stress?), retrying...")
+
         time.sleep(poll_s)
 
-    return None, last_metrics
+    print("  [warn] Timeout reached while waiting for chain completion.", file=sys.stderr)
+    if last_metrics is not None and last_metrics["total_txs"] > baseline_total_txs:
+        # Partial progress recorded — surface it with completed_on_time=False.
+        return last_change_ts, last_metrics, False
+    return None, last_metrics, False
+
 
 _BENCH_STATS_RE = re.compile(r"BENCH_STATS:(\{.*\})")
 
@@ -443,24 +505,28 @@ def run_cometbft_bench(
     concurrency: int,
     sleep_ms: int,
     targets: list[str],
+    mode: str = "async",
 ) -> dict | None:
     """
     Execute sps-bench inside the light0 container.
     Returns parsed BENCH_STATS dict or None on failure.
     """
     targets_arg = ",".join(targets)
+    # Resolve the binary ONCE, then run it exactly once. The previous
+    # `sps-bench ... || /shared/sps-bench ...` fallback re-injected the whole
+    # burst whenever the first invocation exited non-zero (double send).
     cmd_str = (
-        f"sps-bench --n {n} "
+        "BIN=$(command -v sps-bench || true); "
+        "[ -x \"$BIN\" ] || BIN=/shared/sps-bench; "
+        f"\"$BIN\" --n {n} "
         f"--targets {targets_arg} "
         f"--concurrency {concurrency} "
         f"--sleep-ms {sleep_ms} "
         f"--step {step} "
-        f"|| /shared/sps-bench --n {n} --targets {targets_arg} "
-        f"--concurrency {concurrency} --sleep-ms {sleep_ms} --step {step}"
+        f"--mode {mode}"
     )
     inner = f"bash -c '{cmd_str}'"
     print(f"  Executing: {inner}")
-    # Timeout: generous — the binary polls /tx_count for up to 60s.
     raw = kathara_exec(lab_dir, COMET_BENCH_NODE, inner, timeout=900)
     print(raw)
     stats = parse_bench_stats(raw)
@@ -561,14 +627,17 @@ def main():
                         default=[100,500,1000,5000,10000,50000,100000],
                         help="Burst sizes N to benchmark.")
     parser.add_argument("--concurrency", type=int,
-                        default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "64")),
-                        help="Parallel WebSocket send workers used by sps-bench (CometBFT only).")
+                        default=int(os.environ.get("COMET_BENCH_CONCURRENCY", "256")),
+                        help="Parallel HTTP send workers used by sps-bench (CometBFT only).")
     parser.add_argument("--sleep-ms", type=int,
                         default=int(os.environ.get("COMET_BENCH_SLEEP_MS", "0")),
                         help="Per-frame sender pacing in ms (CometBFT only, default 0 for max throughput).")
+    parser.add_argument("--mode", type=str, choices=["sync", "async"],
+                        default=os.environ.get("COMET_BENCH_MODE", "async"),
+                        help="CometBFT broadcast mode: async (fire-and-forget, max TPS) or sync.")
     parser.add_argument("--comet-rpc-targets", type=str,
                         default=os.environ.get("COMET_RPC_TARGETS", ",".join(COMET_RPC_TARGETS)),
-                        help="Comma-separated CometBFT RPC targets for direct WebSocket injection.")
+                        help="Comma-separated CometBFT RPC targets for direct HTTP injection.")
     parser.add_argument("--no-build", action="store_true",
                         help="Skip binary compilation; assume sps-bench exists in /shared.")
     args = parser.parse_args()
@@ -584,6 +653,7 @@ def main():
     print(f"  Burst steps   : {args.steps}")
     print(f"  Concurrency   : {args.concurrency}  (CometBFT only)")
     print(f"  Sleep ms      : {args.sleep_ms}  (CometBFT only)")
+    print(f"  Mode          : {args.mode}  (CometBFT only)")
     print(f"  RPC targets   : {args.comet_rpc_targets}  (CometBFT only)")
     print(f"  Results dir   : {res_dir}/")
     print(f"{'=' * 60}\n")
@@ -617,14 +687,12 @@ def main():
     
     try:
         if lab_type == "cometbft":
+            # set_benchmark_mode already creates the disable_negative_alerts
+            # marker (IDS alerts + feedback stay muted for a clean run).
             set_benchmark_mode(args.lab_dir, True)
             set_raw_throughput_mode(args.lab_dir, True)
             benchmark_mode_enabled = True
-            
-            # Mute IDS alerts and feedback loop for clean benchmark
-            print(f"  [config] Muting IDS alerts and actuator feedback...")
-            with open(mute_flag_path, "w") as f:
-                f.write("1")
+            print("  [config] IDS alerts and actuator feedback muted for clean benchmark.")
 
         for step_idx, n in enumerate(args.steps):
             print(f"\n{'─' * 55}")
@@ -637,7 +705,7 @@ def main():
                 print(f"  [pre] Waiting for tx_count quiescence before baseline…")
                 wait_for_tx_quiescence(args.lab_dir, lab_type)
                 
-                baseline_metrics = get_comet_rpc_metrics(args.lab_dir, COMET_BENCH_NODE)
+                baseline_metrics = get_comet_rpc_metrics(args.lab_dir, COMET_MEASURE_NODE)
                 if baseline_metrics is None:
                     print("ERROR: Failed to query CometBFT baseline metrics.", file=sys.stderr)
                     sys.exit(1)
@@ -656,19 +724,26 @@ def main():
                     concurrency=args.concurrency,
                     sleep_ms=args.sleep_ms,
                     targets=rpc_targets,
+                    mode=args.mode,
                 )
-                completion_ts, completion_metrics = wait_for_comet_completion(
+                completion_ts, completion_metrics, completed = wait_for_comet_completion(
                     args.lab_dir,
                     baseline_total_txs=baseline,
                     n=n,
-                    timeout_s=600,
-                    poll_s=1.0,
-                    stable_ticks=3,
                 )
-                if completion_ts is None or completion_metrics is None:
-                    print("ERROR: Timed out waiting for chain completion condition.", file=sys.stderr)
+                if completion_metrics is None:
+                    print("ERROR: Could not query CometBFT metrics while waiting for completion.", file=sys.stderr)
                     sys.exit(1)
-                wall_time = completion_ts - start_wall
+                if not completed:
+                    print(
+                        "  [warn] Completion condition not met within timeout — "
+                        "recording partial results for this step.",
+                        file=sys.stderr,
+                    )
+                # Wall time = injection start -> LAST commit observed (paper
+                # Figure 5b semantics). If nothing was ever committed, the
+                # full wait duration is reported and TPS comes out as 0.
+                wall_time = (completion_ts or time.time()) - start_wall
                 committed = completion_metrics["total_txs"] - baseline
                 tps = committed / wall_time if wall_time > 0 else 0.0
                 send_errors = int(stats.get("SendErrors", 0)) if stats else 0
@@ -678,13 +753,14 @@ def main():
                     "Sent": sent,
                     "SendErrors": send_errors,
                     "Transactions": committed,
-                    "SuccessRate": (committed / n * 100.0) if n > 0 else 0.0,
+                    "SuccessRate": (committed / sent * 100.0) if sent > 0 else 0.0,
                     "TotalTimeSeconds": wall_time,
                     "SentTime": float(stats.get("SentTime", 0.0)) if stats else 0.0,
                     "TPS": tps,
                     "BaselineTotalTxs": baseline,
                     "FinalTotalTxs": completion_metrics["total_txs"],
                     "FinalUnconfirmedTxs": completion_metrics["unconfirmed_txs"],
+                    "CompletedOnTime": completed,
                 }
             else:
                 print(f"  [pre] Waiting for tx_count quiescence before baseline…")

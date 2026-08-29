@@ -38,33 +38,9 @@ try {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
-
-function postStress(ip, alertType) {
-    return new Promise((resolve) => {
-        const body = JSON.stringify({ type: alertType, value: 1 });
-        const options = {
-            hostname: ip,
-            port: API_PORT,
-            path: '/stress',
-            method: 'POST',
-            agent: KEEP_ALIVE_AGENT,
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-                'Connection': 'keep-alive',
-            },
-            timeout: 15000,
-        };
-        const req = http.request(options, (res) => {
-            res.resume();
-            res.on('end', () => resolve(res.statusCode < 400));
-        });
-        req.on('error', () => resolve(false));
-        req.on('timeout', () => { req.destroy(); resolve(false); });
-        req.write(body);
-        req.end();
-    });
-}
+// NOTE: injection goes through eth_sendTransaction on the member RPC ports
+// (see sendRpcTx below). The old /stress HTTP path was removed: it depended
+// on an undefined API_PORT constant and was never invoked.
 
 function rpcCall(ip, method, params) {
     return new Promise((resolve) => {
@@ -151,10 +127,6 @@ async function getTotalCommitted(accountsByIp) {
         total += await getNodeCommittedTx(ip, accountsByIp[ip]);
     }
     return total;
-}
-
-async function sendWithRetry(ip, fromAccount) {
-    return sendRpcTx(ip, fromAccount);
 }
 
 // ── main ───────────────────────────────────────────────────────────────────

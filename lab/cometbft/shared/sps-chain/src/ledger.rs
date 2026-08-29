@@ -1,6 +1,10 @@
 /// IDS voting state machine — optimized for extreme throughput.
+///
+/// The state → action map is keyed by the raw 4‑character state string
+/// (e.g. "1000") instead of its SHA256 hash, avoiding a hashing cost on
+/// every state transition.  With only 4 parameters (15 possible states) the
+/// map is tiny and string keys are perfectly adequate.
 use std::collections::HashMap;
-use sha2::{Sha256, Digest};
 use crate::types::ActionEvent;
 
 #[derive(Debug, Default)]
@@ -14,12 +18,10 @@ pub struct Ledger {
     parameters: Vec<String>,
     param_to_idx: HashMap<String, usize>,
     status_map: Vec<ParamStatus>,
-    state_action: HashMap<String, String>, // sha256(state_str) -> action
+    state_action: HashMap<String, String>, // state_str (e.g. "1000") -> action
     agents_count: usize,
     committed_txs: u64,
     pub dedup_disabled: bool,
-    
-    // Internal registry to avoid string keys in maps
     agent_registry: HashMap<String, u32>,
     next_agent_id: u32,
 }
@@ -76,8 +78,7 @@ impl Ledger {
             let action_str = actions.join(" && ");
             
             if !action_str.is_empty() {
-                let hash = hex::encode(Sha256::digest(state_str.as_bytes()));
-                self.state_action.insert(hash, action_str);
+                self.state_action.insert(state_str, action_str);
             }
         }
         log::info!("[LEDGER] Action map ready — {} entries", self.state_action.len());
@@ -133,9 +134,8 @@ impl Ledger {
                 state_str.push(if status.current_value == 0 { '0' } else { '1' });
             }
             
-            let hash = hex::encode(Sha256::digest(state_str.as_bytes()));
-
-            if let Some(action) = self.state_action.get(&hash) {
+            // Direct string lookup — no SHA256, no hex encoding.
+            if let Some(action) = self.state_action.get(&state_str) {
                 let ts = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -152,10 +152,6 @@ impl Ledger {
 
     pub fn tx_count(&self) -> u64 { self.committed_txs }
 
-    /// Restituisce il vettore dei valori correnti CONFERMATI per ogni parametro
-    /// (nell'ordine canonico SQL_INJECTION, XSS_ATTACK, PATH_TRAVERSAL, COMMAND_INJECTION).
-    /// Valore 0 = sicuro, 1 = attacco confermato via BFT.
-    /// Usato dalla dedup API per scartare alert ridondanti rispetto allo stato reale.
     pub fn get_confirmed_values(&self) -> [u64; 4] {
         let mut out = [0u64; 4];
         for i in 0..self.status_map.len().min(4) {

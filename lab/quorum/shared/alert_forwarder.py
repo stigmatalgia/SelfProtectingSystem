@@ -33,6 +33,9 @@ DISABLE_NEGATIVE_MARKER = "/shared/disable_negative_alerts"
 
 ALERTS = ["SQL_INJECTION", "XSS_ATTACK", "PATH_TRAVERSAL", "COMMAND_INJECTION"]
 
+# Contatore globale per il sampling dei log [MATCH]
+_match_count = 0
+
 # Coda in RAM per gli alert in uscita
 alert_queue = queue.Queue(maxsize=200000)
 
@@ -61,28 +64,45 @@ def forwarder_worker(worker_id):
         if not batch:
             continue
 
-        data = json.dumps(batch).encode('utf-8')
-        
-        success = False
-        retries = 3
-        while not success and retries > 0 or False:
-            try:
-                # Usiamo Keep-Alive per non chiudere il socket
-                headers = {'Content-Type': 'application/json', 'Connection': 'keep-alive'}
-                conn.request("POST", "/alert", body=data, headers=headers)
-                response = conn.getresponse()
-                response.read() # Leggiamo la risposta per liberare il socket
-                
-                if response.status in [200, 202, 201]:
-                    success = True
-                else:
+        # Separa il batch per tipo di alert prima dell'invio.
+        # Ogni POST contiene SOLO alert dello stesso tipo, così la dedup API
+        # riceve un param_mask con UN solo bit set → genera una transazione
+        # separata per tipo → massimizza le tx (4 per nodo × 3 nodi = 12).
+        # Senza questa separazione, un batch misto brucia tutti i tipi in 1 tx.
+        by_type: dict = {}
+        for item in batch:
+            t = item.get("type", "UNKNOWN")
+            by_type.setdefault(t, []).append(item)
+
+        for alert_type, type_batch in by_type.items():
+            data = json.dumps(type_batch).encode('utf-8')
+
+            success = False
+            retries = 3
+            while not success and retries > 0:
+                try:
+                    headers = {'Content-Type': 'application/json', 'Connection': 'keep-alive'}
+                    conn.request("POST", "/alert", body=data, headers=headers)
+                    response = conn.getresponse()
+                    resp_data = response.read()
+
+                    if response.status in [200, 202, 201]:
+                        success = True
+                        sys.stdout.write(
+                            f"[SEND] Forwarded {len(type_batch)}× {alert_type} alerts to {VALIDATOR_IP}\n"
+                        )
+                    else:
+                        sys.stdout.write(
+                            f"[ERROR] Failed to forward {alert_type}: {response.status} - {resp_data.decode()}\n"
+                        )
+                        retries -= 1
+                except Exception as e:
+                    sys.stdout.write(f"[ERROR] Connection error to {VALIDATOR_IP}: {e}\n")
+                    connect()
                     retries -= 1
-            except Exception:
-                # Se l'API chiude la connessione, ci riconnettiamo
-                connect()
-                retries -= 1
-                time.sleep(0.1)
-                
+                    time.sleep(0.1)
+            sys.stdout.flush()
+
         for _ in batch:
             alert_queue.task_done()
 
@@ -90,48 +110,62 @@ def follow(file_path):
     while True:
         line = file_path.readline()
         if not line:
-            time.sleep(0.05)
+            time.sleep(0.01)
             continue
         yield line
 
 def main():
+    global _match_count
     sys.stdout.write(f"[INIT] Fast Forwarder started: {IDS_NAME} -> {VALIDATOR_IP}:3000\n")
     sys.stdout.flush()
 
     while not os.path.exists(LOG_FILE):
         time.sleep(1)
 
+    # Avviamo 10 worker
     for i in range(10):
         t = threading.Thread(target=forwarder_worker, args=(i,), daemon=True)
         t.start()
 
     with open(LOG_FILE, "r") as f:
-        f.seek(0, os.SEEK_END)
+        # NON facciamo f.seek(0, os.SEEK_END) per non perdere alert iniziali
         for line in follow(f):
             line_lower = line.lower()
             
             # Recupero (Negative alert)
-            if "negative alert: " in line_lower:
+            if "negative alert" in line_lower:
                 if os.path.exists(DISABLE_NEGATIVE_MARKER):
                     continue
-                try:
-                    alert_type = line.split("NEGATIVE ALERT: ")[1].strip()
-                    payload = {
-                        "ids": IDS_NAME, "message": "Recovery", 
-                        "type": alert_type, "value": 0, "timestamp": datetime.now().isoformat()
-                    }
-                    alert_queue.put(payload)
-                except: pass
+                for alert_type in ALERTS:
+                    if alert_type.lower() in line_lower:
+                        payload = {
+                            "ids": IDS_NAME, "message": "Recovery", 
+                            "type": alert_type, "value": 0, "timestamp": datetime.now().isoformat()
+                        }
+                        alert_queue.put(payload)
+                        break
                 continue
 
             # Attacchi
             for alert_type in ALERTS:
-                if alert_type.lower() in line_lower or alert_type.replace("_", " ").lower() in line_lower:
+                patterns = [
+                    alert_type.lower(),                                 # sql_injection
+                    alert_type.replace("_", " ").lower(),              # sql injection
+                    alert_type.replace("_", "-").lower(),              # sql-injection
+                ]
+
+                if any(p in line_lower for p in patterns):
                     payload = {
-                        "ids": IDS_NAME, "message": line.strip(), 
+                        "ids": IDS_NAME, "message": line.strip(),
                         "type": alert_type, "value": 1, "timestamp": datetime.now().isoformat()
                     }
                     alert_queue.put(payload)
+                    # Log sampling: under bursts (10^4–10^5 alerts) printing one
+                    # line per match saturates the container's stdout pipe.
+                    _match_count += 1
+                    if _match_count % 500 == 1:
+                        sys.stdout.write(f"[MATCH] {alert_type} matched in {IDS_NAME} logs (total {_match_count})\n")
+                        sys.stdout.flush()
                     break
 
 if __name__ == "__main__":
